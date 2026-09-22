@@ -115,5 +115,6 @@
   "cli_processing": "[{index}/{total}] {name}",
   "cli_encoding_info": "  인코딩: {enc} ({confidence}%) → {used} 적용",
   "cli_confirm_hint": " [y/N] ",
-  "cli_no_input": "처리할 TXT 파일이 없습니다"
+  "cli_no_input": "처리할 TXT 파일이 없습니다",
+  "cli_need_yes": "확인이 필요하지만 대화형 터미널이 아닙니다. -y를 붙여 다시 실행하세요"
 }

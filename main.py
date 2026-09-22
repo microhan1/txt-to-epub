@@ -81,9 +81,17 @@ def _options_from(args: argparse.Namespace) -> core.Options:
 
 
 def _confirm(question: str, yes: bool) -> bool:
-    if yes or not sys.stdin.isatty():
-        return yes
-    answer = input(question + t("cli_confirm_hint")).strip().lower()
+    if yes:
+        return True
+    if sys.stdin is None or not sys.stdin.isatty():
+        print(question, file=sys.stderr)
+        print(t("cli_need_yes"), file=sys.stderr)
+        return False
+    try:
+        answer = input(question + t("cli_confirm_hint")).strip().lower()
+    except EOFError:  # Windows reports the NUL device as a tty
+        print(t("cli_need_yes"), file=sys.stderr)
+        return False
     return answer in ("y", "yes")
 
 
@@ -127,6 +135,7 @@ def run_cli(args: argparse.Namespace) -> int:
             if size > detect.WARN_SIZE and not _confirm(
                     t("warn_large_file", name=name, size=f"{size / 1048576:.0f}"), args.yes):
                 print(t("log_skipped", name=name))
+                failures += 1
                 continue
             loaded = core.load_text(path, opts.encoding)
         except detect.EmptyFile:
@@ -137,8 +146,12 @@ def run_cli(args: argparse.Namespace) -> int:
             print(t("err_decode_failed", name=name), file=sys.stderr)
             failures += 1
             continue
-        except Exception:
+        except OSError:
             print(t("err_open_failed", name=name), file=sys.stderr)
+            failures += 1
+            continue
+        except Exception as exc:  # a bug must be visible, not hidden behind "cannot open"
+            print(t("err_file_failed", name=name, error=f"{type(exc).__name__}: {exc}"), file=sys.stderr)
             failures += 1
             continue
         print(t("cli_encoding_info", enc=loaded.detection.display, confidence=loaded.detection.confidence,
@@ -152,6 +165,7 @@ def run_cli(args: argparse.Namespace) -> int:
             print(t("chapter_none"))
         elif count > chap.MANY_CHAPTERS and not _confirm(t("warn_many_chapters", name=name, count=count), args.yes):
             print(t("log_skipped", name=name))
+            failures += 1
             continue
         try:
             result = core.convert(loaded, opts, title, chapters)

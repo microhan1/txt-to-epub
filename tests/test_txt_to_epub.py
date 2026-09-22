@@ -123,7 +123,7 @@ class ChapterTests(unittest.TestCase):
 
     def test_default_pattern_rejects_body_text(self):
         self.assertFalse(any(self.heads("그는 제1장을 읽었다", "1990년의 일이었다", "3.5kg", "x" * 90,
-                                        "제일 좋아하는 계절", "", "   ")))
+                                        "제일 좋아하는 계절", "제11111장", "", "   ")))
 
     def test_detect_and_front_section(self):
         lines = chap.normalize(KO_TEXT)

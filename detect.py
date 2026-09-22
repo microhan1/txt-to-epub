@@ -9,6 +9,7 @@ in Korean text files and would otherwise turn into replacement characters.
 from __future__ import annotations
 
 import codecs
+import re
 import threading
 from dataclasses import dataclass
 
@@ -32,7 +33,8 @@ _CANONICAL = {
 DISPLAY_NAMES = {"cp949": "EUC-KR / CP949", "utf-8": "UTF-8", "utf-8-sig": "UTF-8 (BOM)",
                  "utf-16": "UTF-16", "utf-16-le": "UTF-16 LE", "utf-16-be": "UTF-16 BE",
                  "euc-kr": "EUC-KR", "shift_jis": "Shift_JIS", "euc-jp": "EUC-JP",
-                 "gb18030": "GB18030", "big5": "Big5", "latin-1": "Latin-1"}
+                 "gb18030": "GB18030", "big5": "Big5", "latin-1": "Latin-1",
+                 "euc_jis_2004": "EUC-JP", "cp932": "Shift_JIS"}
 
 LOW_CONFIDENCE = 70          # below this the GUI shows the preview with a red border
 SAMPLE_BYTES = 1 << 20       # detection looks at the first 1 MB only; enough for any code page
@@ -72,19 +74,33 @@ def _bom(data: bytes) -> str | None:
     return None
 
 
+_PLAUSIBLE = re.compile("[\t\r\n\x20-\x7e\u00c0-\u024f\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff"
+                        "\uac00-\ud7a3\uf900-\ufaff\uff00-\uffef]")
+# Letters and CJK only: Latin-1 symbols (U+00A0-00BF) and general punctuation are
+# what the wrong endianness of Hangul bytes decodes to, so they do not count.
+
+
 def _looks_utf16(data: bytes) -> str | None:
-    """UTF-16 without a BOM shows up as NUL bytes in every other position."""
+    """UTF-16 without a BOM: every ASCII character contributes a NUL byte, so
+    a text with no NULs at all is not UTF-16. Which endianness is right is
+    decided by decoding both ways: the wrong one yields code points all over
+    the map (or fails outright), the right one yields ordinary text."""
     head = data[:4096]
-    if len(head) < 4:
+    head = head[: len(head) - len(head) % 2]
+    if len(head) < 4 or head.count(b"\x00") < max(2, len(head) * 0.01):
         return None
-    even_nul = sum(1 for b in head[0::2] if b == 0)
-    odd_nul = sum(1 for b in head[1::2] if b == 0)
-    half = len(head) // 2
-    if odd_nul > half * 0.3 and even_nul < half * 0.05:
-        return "utf-16-le"
-    if even_nul > half * 0.3 and odd_nul < half * 0.05:
-        return "utf-16-be"
-    return None
+    best, best_score = None, 0.0
+    for enc in ("utf-16-le", "utf-16-be"):
+        try:
+            text = head.decode(enc)
+        except UnicodeDecodeError:
+            continue
+        if not text:
+            continue
+        score = len(_PLAUSIBLE.findall(text)) / len(text)
+        if score > best_score:
+            best, best_score = enc, score
+    return best if best_score >= 0.9 else None
 
 
 def detect(data: bytes) -> Detection:
@@ -105,25 +121,36 @@ def detect(data: bytes) -> Detection:
         pass
     # A strict CP949 decode of the whole sample is stronger evidence than any
     # statistical guess for Korean text, which is what this tool mostly sees.
-    cp949_bad = _bad_count(sample, "cp949")
+    cp949_text, cp949_bad = _try_decode(sample, "cp949")
     cp949_ok = cp949_bad == 0
     # A few damaged bytes must not disqualify CP949: 1% of the sample, at least 2.
     cp949_near = cp949_bad <= max(2, int(len(sample) * NEAR_VALID))
+    korean = _looks_korean(cp949_text)
+    if cp949_near and korean is True:
+        # Real Korean text: the CP949 decoding is full of the everyday syllables.
+        return Detection("cp949", 90 if cp949_ok else _near_conf(cp949_bad, len(sample)))
     guess = _normalizer_guess(sample)
+    if guess is not None and guess[0].startswith(("utf-16", "utf-32", "utf_16", "utf_32")):
+        guess = None  # no NUL pattern was found above, so a UTF-16/32 guess on a short sample is noise
     if guess is None:
-        if cp949_ok:
-            return Detection("cp949", 75)
-        return Detection("cp949", _near_conf(cp949_bad, len(sample))) if cp949_near else Detection("utf-8", 0)
+        if cp949_near and korean is None:
+            return Detection("cp949", 75 if cp949_ok else _near_conf(cp949_bad, len(sample)))
+        alt = _cjk_alternative(sample)
+        return alt or Detection("utf-8", 0)
     enc, conf = guess
     if enc == "cp949":
+        if korean is False:
+            # Valid CP949 bytes that read as random syllables and Hanja: this is
+            # Chinese or Japanese in an EUC code page that shares the byte ranges.
+            alt = _cjk_alternative(sample)
+            if alt is not None:
+                return alt
         return Detection(enc, max(conf, 90) if cp949_ok else min(conf, 60))
-    if cp949_ok and enc in _OTHER_DBCS and conf < 85:
-        # charset-normalizer is unsure and the bytes are valid CP949: prefer Korean
-        return Detection("cp949", 70)
-    if not cp949_ok and cp949_near and enc != "utf-8":
-        # A Korean file with a few damaged bytes: charset-normalizer wanders off
-        # to another code page. If that guess is no cleaner than CP949, keep
-        # CP949 and let the damaged bytes show as U+FFFD.
+    if cp949_ok and korean is None and enc in _OTHER_DBCS and conf < 85:
+        # too little text to judge and charset-normalizer is unsure: prefer
+        # Korean, but stay under LOW_CONFIDENCE so the preview gets flagged
+        return Detection("cp949", 60)
+    if not cp949_ok and cp949_near and korean is None and enc != "utf-8":
         if _bad_count(sample, enc) >= cp949_bad:
             return Detection("cp949", _near_conf(cp949_bad, len(sample)))
     return Detection(enc, conf)
@@ -131,13 +158,70 @@ def detect(data: bytes) -> Detection:
 
 NEAR_VALID = 0.01            # up to 1% undecodable bytes still counts as "nearly valid"
 _OTHER_DBCS = ("shift_jis", "euc-jp", "gb18030", "big5", "latin-1")
+MIN_SYLLABLES = 8            # fewer Hangul syllables than this and the Korean test abstains
+COMMON_SHARE = 0.15          # Korean prose scores 0.35-0.75; CJK misread as CP949 scores ~0.02
+
+# The most frequent Korean syllables (particles, endings, common stems). Their
+# share among all Hangul syllables is high for any Korean prose and near zero
+# for Chinese or Japanese bytes decoded as CP949.
+_COMMON_SYLLABLES = frozenset(
+    "\ub2e4\uc774\ub294\uc744\uc5d0\uc758\uac00\ud558\uace0\uc9c0\ub97c\uc740\ub85c\uc5b4\uadf8"
+    "\ud55c\uc11c\uae30\ub3c4\ub098\uc0ac\ub9ac\uac83\ub2c8\uac8c\uc544\uc788\ub300\uc790\uc2dc"
+    "\uc778\uc218\ub418\ub9cc\ub4e4\uc5c6\uc73c\uc57c\uc694\uc5ec\ub2e8\uc740\uc774\uc9c0\ub3c4")
+_SYLLABLE = re.compile("[\uac00-\ud7a3]")
+_KANA_RX = re.compile("[\u3040-\u30ff]")
+_HAN_RX = re.compile("[\u4e00-\u9fff\u3400-\u4dbf]")
+
+
+def _looks_korean(text: str) -> bool | None:
+    """True when the everyday syllables are common enough, False when they are
+    rare *and* there is other evidence (a Hanja-heavy mix, or plenty of text),
+    None when the text is too short to say. Short Korean lines can miss the
+    common syllables by chance, so "False" needs the extra evidence."""
+    head = text[:200000]
+    syllables = _SYLLABLE.findall(head)
+    if len(syllables) < MIN_SYLLABLES:
+        return None
+    share = sum(1 for c in syllables if c in _COMMON_SYLLABLES) / len(syllables)
+    if share >= COMMON_SHARE:
+        return True
+    hanja = len(_HAN_RX.findall(head))
+    if share < COMMON_SHARE / 2 and (hanja >= len(syllables) * 0.2 or len(syllables) >= 40):
+        return False
+    return None
+
+
+def _cjk_alternative(sample: bytes) -> Detection | None:
+    """Pick a Japanese or Chinese code page for bytes that are valid but not
+    Korean. Japanese always shows kana; Chinese shows none."""
+    for enc in ("euc-jp", "shift_jis", "gb18030", "big5"):
+        text, bad = _try_decode(sample, enc)
+        if bad:
+            continue
+        kana = len(_KANA_RX.findall(text))
+        han = len(_HAN_RX.findall(text))
+        if kana + han == 0:
+            continue
+        japanese = kana / (kana + han) >= 0.05
+        if enc in ("euc-jp", "shift_jis") and japanese:
+            return Detection(enc, 70)
+        if enc in ("gb18030", "big5") and not japanese:
+            return Detection(enc, 70)
+    return None
 
 
 def _near_conf(bad: int, size: int) -> int:
-    """Confidence for CP949 text with a few damaged bytes: 85 when fewer than
-    one byte in a thousand is bad, otherwise 60 (below LOW_CONFIDENCE, so the
-    GUI asks the user to look)."""
-    return 85 if bad * 1000 <= size else 60
+    """Confidence for CP949 text with a few damaged bytes: 85 when at most one
+    byte in a thousand (or a single damaged spot, which costs up to 3 errors)
+    is bad, otherwise 60 (below LOW_CONFIDENCE, so the GUI asks the user to look)."""
+    return 85 if bad <= max(3, size // 1000) else 60
+
+
+def _try_decode(data: bytes, encoding: str) -> tuple[str, int]:
+    try:
+        return decode(data, encoding)
+    except LookupError:
+        return "", len(data)
 
 
 def _bad_count(data: bytes, encoding: str) -> int:

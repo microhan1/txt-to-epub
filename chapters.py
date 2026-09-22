@@ -142,7 +142,7 @@ def choose_paragraph_mode(lines: list[str], mode: str = "auto") -> str:
     return "blank" if blank * 40 >= len(lines) else "line"
 
 
-_CJK_NO_SPACE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")
+_CJK_NO_SPACE = re.compile(r"[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")
 
 
 def _join(a: str, b: str) -> str:

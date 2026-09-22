@@ -115,5 +115,6 @@
   "cli_processing": "[{index}/{total}] {name}",
   "cli_encoding_info": "  编码：{enc}（{confidence}%）→ 使用 {used}",
   "cli_confirm_hint": " [y/N] ",
-  "cli_no_input": "没有可处理的TXT文件"
+  "cli_no_input": "没有可处理的TXT文件",
+  "cli_need_yes": "需要确认，但当前不是交互式终端。请加上 -y 重新运行"
 }

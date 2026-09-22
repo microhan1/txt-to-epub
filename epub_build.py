@@ -15,7 +15,7 @@ import uuid
 import zipfile
 from dataclasses import dataclass, field
 from string import Template
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, quoteattr
 
 import chapters as chap
 import cover as cover_mod
@@ -147,12 +147,19 @@ _LATIN = re.compile("[A-Za-z]")
 def guess_text_lang(text: str) -> str:
     """Pick ko/ja/zh/en from the script used in the first part of the text."""
     sample = text[:20000]
-    counts = {"ko": len(_HANGUL.findall(sample)), "ja": len(_KANA.findall(sample)),
-              "zh": len(_HAN.findall(sample)), "en": len(_LATIN.findall(sample))}
-    if counts["ja"] > 0 and counts["ja"] * 4 >= counts["zh"]:
+    hangul, kana, han, latin = (len(rx.findall(sample)) for rx in (_HANGUL, _KANA, _HAN, _LATIN))
+    total = hangul + kana + han + latin
+    if total == 0:
+        return "en"
+    # Korean or Japanese novels quote English freely; English novels never
+    # contain Hangul or kana. So a small share of those scripts decides.
+    if hangul >= total * 0.05:
+        return "ko"
+    if kana >= total * 0.05:
         return "ja"
-    best = max(counts, key=counts.get)
-    return best if counts[best] else "en"
+    if han >= total * 0.05:
+        return "zh"
+    return "en"
 
 
 # --- naming -----------------------------------------------------------------
@@ -230,7 +237,8 @@ def build_epub(output_path: str, title: str, author: str, language: str, section
         img_name = f"images/cover.{cover.ext}"
         files.append((f"OEBPS/{img_name}", cover.data))
         manifest.append(f'    <item id="cover-image" href="{img_name}" media-type="{cover.media_type}"/>')
-        cover_html = _template("cover.xhtml").substitute(title=escape(title), image=img_name, language=language)
+        cover_html = _template("cover.xhtml").substitute(title=escape(title), alt=quoteattr(title),
+                                                         image=img_name, language=language)
         files.append(("OEBPS/cover.xhtml", cover_html.encode("utf-8")))
         manifest.append('    <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>')
         spine.append('    <itemref idref="cover" linear="yes"/>')

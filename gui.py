@@ -65,8 +65,10 @@ class FileState:
     encoding: str = detect.AUTO        # user's choice; AUTO means the detected one
     loaded: core.Loaded | None = None
     error: str | None = None           # i18n key of a load error
+    error_text: str = ""               # detail for err_file_failed
     loading: bool = False
     pattern_applied: str = ""
+    split: bool = True
     detected: list[int] = field(default_factory=list)
     manual: set[int] = field(default_factory=set)
     disabled: set[int] = field(default_factory=set)
@@ -77,6 +79,8 @@ class FileState:
         return os.path.basename(self.path)
 
     def starts(self) -> set[int]:
+        if not self.split:
+            return set()
         return set(self.detected) | self.manual
 
     def table(self) -> list[chap.Chapter]:
@@ -502,6 +506,8 @@ class App:
         def work() -> None:
             loaded = None
             error = None
+            error_text = ""
+            bad_pattern = False
             starts: list[int] = []
             try:
                 loaded = core.load_text(state.path, enc)
@@ -512,10 +518,14 @@ class App:
                 error = "err_empty"
             except chap.BadPattern:
                 starts = []
+                bad_pattern = True
             except (LookupError, UnicodeError):
                 error = "err_decode_failed"
-            except Exception:
+            except OSError:
                 error = "err_open_failed"
+            except Exception as exc:  # a bug must be visible, not hidden behind "cannot open"
+                error = "err_file_failed"
+                error_text = f"{type(exc).__name__}: {exc}"
 
             def done() -> None:
                 if gen != state.gen:
@@ -523,15 +533,19 @@ class App:
                 state.loading = False
                 state.loaded = loaded
                 state.error = error
+                state.error_text = error_text
                 state.detected = starts
+                state.split = split
                 state.pattern_applied = pattern_key
+                if bad_pattern:
+                    self._detect_for(state)  # shows the regex error for the current file
                 if loaded is not None:
                     self.log("log_added", name=state.name, enc=loaded.detection.display,
                              confidence=loaded.detection.confidence)
                     if loaded.replaced:
                         self.log("log_replaced", name=state.name, count=loaded.replaced)
                 elif error:
-                    self.log(error, name=state.name)
+                    self.log(error, name=state.name, error=error_text)
                 if state is self.current:
                     self._refresh_file_panel()
 
@@ -557,6 +571,7 @@ class App:
                 if state is self.current:
                     self.lbl_pattern_err.configure(text=t("err_bad_pattern", error=str(exc)))
         state.detected = starts
+        state.split = self.var_split.get()
         state.pattern_applied = self._pattern_key()
 
     def _refresh_file_panel(self) -> None:
@@ -593,7 +608,7 @@ class App:
             self.lbl_preview_msg.configure(text=t("preview_loading"))
         elif st.error or st.loaded is None:
             self.lbl_enc.configure(text="")
-            self.lbl_preview_msg.configure(text=t(st.error or "err_open_failed", name=st.name))
+            self.lbl_preview_msg.configure(text=t(st.error or "err_open_failed", name=st.name, error=st.error_text))
         else:
             det = st.loaded.detection
             self.lbl_enc.configure(text=t("enc_detected", enc=det.display, confidence=det.confidence))
@@ -788,8 +803,6 @@ class App:
             self.log("log_no_chapters", name=name)
         else:
             self.log("log_chapters", name=name, count=r.chapters)
-        if r.cover_small:
-            self.log("warn_cover_small", width=0)
         self.log("log_saved", path=r.output_path)
 
     def _on_progress(self, done: int, file_idx: int, files: int, name: str) -> None:

@@ -115,5 +115,6 @@
   "cli_processing": "[{index}/{total}] {name}",
   "cli_encoding_info": "  エンコーディング: {enc}（{confidence}%）→ {used} を適用",
   "cli_confirm_hint": " [y/N] ",
-  "cli_no_input": "処理するTXTファイルがありません"
+  "cli_no_input": "処理するTXTファイルがありません",
+  "cli_need_yes": "確認が必要ですが対話型ターミナルではありません。-y を付けて再実行してください"
 }
