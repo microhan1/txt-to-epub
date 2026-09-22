@@ -1,0 +1,12 @@
+{
+  "_comment": "Chapter heading patterns (Python regular expressions, matched against a trimmed line). 'default' is the built-in pattern; 'presets' fill the GUI drop-down.",
+  "default": "^\\s*(?:제\\s*\\d+\\s*(?:장|화|편|부|회|막)\\b|\\d{1,4}\\s*(?:장|화|편|부|회)(?=\\s|$)|\\d{1,4}\\s*\\.(?:\\s+\\S|$)|(?:Chapter|CHAPTER|Part|PART)\\s+(?:\\d+|[IVXLC]+)\\b|(?:Prologue|PROLOGUE|Epilogue|EPILOGUE)\\b|第\\s*[\\d一二三四五六七八九十百千零〇]+\\s*(?:章|話|话|回|節|节|部|卷|集)|프롤로그|에필로그|서장|종장|序章|終章|终章|プロローグ|エピローグ)",
+  "presets": [
+    "^\\s*제\\s*\\d+\\s*장",
+    "^\\s*제\\s*\\d+\\s*화",
+    "^\\s*\\d+\\s*화",
+    "^\\s*\\d{1,3}\\s*\\.(?:\\s+\\S|$)",
+    "^\\s*Chapter\\s+\\d+",
+    "^\\s*第\\s*[\\d一二三四五六七八九十百千零〇]+\\s*[章话話回]"
+  ]
+}

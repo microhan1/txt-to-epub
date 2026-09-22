@@ -1,0 +1,9 @@
+/* No font is set on purpose: the reader's own font and size settings apply. */
+body { margin: 0; padding: 0 2%; }
+body.cover { text-align: center; padding: 0; }
+div.cover { text-align: center; page-break-after: always; }
+div.cover img { max-width: 100%; max-height: 100%; }
+h1, h2 { text-align: center; font-weight: bold; margin: 2em 0 1.5em 0; }
+h1 { font-size: 1.5em; }
+h2 { font-size: 1.3em; }
+p { margin: 0 0 0.6em 0; text-align: justify; text-indent: $indent;$line_height }
