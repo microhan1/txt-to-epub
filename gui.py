@@ -513,7 +513,7 @@ class App:
                 loaded = core.load_text(state.path, enc)
                 if split:
                     rx = chap.compile_pattern(pattern)
-                    starts = [i for i, line in enumerate(loaded.lines) if chap.is_heading(line, rx)]
+                    starts = chap.find_starts(loaded.lines, rx)
             except detect.EmptyFile:
                 error = "err_empty"
             except chap.BadPattern:
@@ -566,7 +566,7 @@ class App:
         if self.var_split.get():
             try:
                 rx = chap.compile_pattern(self.var_pattern.get())
-                starts = [i for i, line in enumerate(state.loaded.lines) if chap.is_heading(line, rx)]
+                starts = chap.find_starts(state.loaded.lines, rx)
             except chap.BadPattern as exc:
                 if state is self.current:
                     self.lbl_pattern_err.configure(text=t("err_bad_pattern", error=str(exc)))

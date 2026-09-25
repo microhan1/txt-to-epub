@@ -88,12 +88,68 @@ def is_heading(line: str, rx: re.Pattern) -> bool:
     return rx.match(s) is not None
 
 
+def find_starts(lines: list[str], rx: re.Pattern) -> list[int]:
+    """Line indexes of chapter headings, with listing runs pruned."""
+    return prune_listing_runs(lines, [i for i, line in enumerate(lines) if is_heading(line, rx)])
+
+
+LISTING_RUN = 3   # this many heading lines in a row with no text between them is a listing
+
+
+def prune_listing_runs(lines: list[str], starts: list[int]) -> list[int]:
+    """Drop headings that only *look* like chapters because they stand in a
+    list: a table of contents at the top of the file (chapter 1 ... chapter 20,
+    one per line, then the real chapters follow) or a numbered list inside
+    the text (1. apple / 2. pear / 3. plum).
+
+    A run is a sequence of headings of the same kind (same shape once the
+    numbers are masked) where each member has no text of its own before the
+    next heading. The heading that closes the run belongs to it only when it
+    sits on the very next line (a list item with text after it); the real
+    chapter that follows a table of contents after a blank line is kept. Runs
+    shorter than LISTING_RUN stay, so a prologue heading directly followed by
+    chapter one still counts."""
+    starts = sorted(starts)
+    keep: list[int] = []
+    n = len(starts)
+
+    def empty_body(j: int) -> bool:
+        end = starts[j + 1] if j + 1 < n else len(lines)
+        return not any(l.strip() for l in lines[starts[j] + 1: end])
+
+    i = 0
+    while i < n:
+        kind = _heading_kind(lines[starts[i]])
+        j = i
+        while j + 1 < n and empty_body(j) and _heading_kind(lines[starts[j + 1]]) == kind:
+            j += 1
+        if j > i and not empty_body(j) and starts[j] != starts[j - 1] + 1:
+            # The closer has text of its own and is not adjacent. It is still a
+            # table-of-contents entry when the same title appears again later.
+            title = lines[starts[j]].strip()
+            if not any(lines[s].strip() == title for s in starts[j + 1:]):
+                j -= 1
+        run = starts[i: j + 1]
+        if len(run) < LISTING_RUN:
+            keep.extend(run)
+        i = j + 1
+    return keep
+
+
+_NUMBER_RX = re.compile("[0-9" + chr(0xFF10) + "-" + chr(0xFF19) + "IVXLCivxlc" + "".join(
+    chr(c) for c in (0x4E00, 0x4E8C, 0x4E09, 0x56DB, 0x4E94, 0x516D, 0x4E03, 0x516B, 0x4E5D, 0x5341, 0x767E, 0x5343,
+                     0x96F6, 0x3007)) + "]+")
+
+
+def _heading_kind(line: str) -> str:
+    """Shape of a heading with its number masked, e.g. 'je#jang' vs '#.'."""
+    return _NUMBER_RX.sub("#", line.strip())[:3]
+
+
 def detect_chapters(lines: list[str], pattern: str = DEFAULT_PATTERN, book_title: str = "") -> list[Chapter]:
     """Return chapters in text order. If no heading matches, one chapter that
     spans the whole text is returned (with heading=False)."""
-    rx = compile_pattern(pattern)
-    starts = [i for i, line in enumerate(lines) if is_heading(line, rx)]
-    return build_chapters(lines, starts, book_title)
+    return build_chapters(lines, find_starts(lines, compile_pattern(pattern)), book_title)
 
 
 def build_chapters(lines: list[str], starts: list[int], book_title: str = "",
@@ -136,10 +192,13 @@ def choose_paragraph_mode(lines: list[str], mode: str = "auto") -> str:
     (at least one blank line per 40 lines), otherwise one paragraph per line."""
     if mode in ("blank", "line"):
         return mode
-    if not lines:
+    first = next((i for i, l in enumerate(lines) if l.strip()), None)
+    if first is None:
         return "line"
-    blank = sum(1 for l in lines if not l.strip())
-    return "blank" if blank * 40 >= len(lines) else "line"
+    last = max(i for i, l in enumerate(lines) if l.strip())
+    body = lines[first: last + 1]  # blank lines at the ends (a final newline) say nothing
+    blank = sum(1 for l in body if not l.strip())
+    return "blank" if blank * 40 >= len(body) else "line"
 
 
 _CJK_NO_SPACE = re.compile(r"[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")
@@ -167,11 +226,14 @@ def paragraphs_of(lines: list[str], mode: str) -> list[str]:
     buf = ""
     for line in lines:
         s = line.strip()
-        if not s:
+        if not s or (buf and _LIST_ITEM.match(s)):
+            # a blank line ends the paragraph; so does a list item, which must
+            # keep its own line even without blank lines around it
             if buf:
                 out.append(_collapse(buf))
                 buf = ""
-            continue
+            if not s:
+                continue
         buf = _join(buf, s) if buf else s
     if buf:
         out.append(_collapse(buf))
@@ -179,6 +241,7 @@ def paragraphs_of(lines: list[str], mode: str) -> list[str]:
 
 
 _MULTI_SPACE = re.compile(r"[ ]{2,}")
+_LIST_ITEM = re.compile(r"^(?:\d{1,3}[.)]|[-*]|" + chr(0x2022) + "|" + chr(0x00B7) + r")\s+\S")
 
 
 def _collapse(s: str) -> str:

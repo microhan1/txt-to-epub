@@ -166,9 +166,17 @@ def guess_text_lang(text: str) -> str:
 
 def output_path_for(input_path: str) -> str:
     """<name>.epub beside the input; (2), (3), ... if the name is taken, even by a folder."""
-    base, _ = os.path.splitext(input_path)
-    candidate = base + ".epub"
-    n = 2
+    return free_output_name(os.path.splitext(input_path)[0] + ".epub")
+
+
+_NUMBERED = re.compile(r"^(.*)\((\d+)\)\.epub$", re.DOTALL)
+
+
+def free_output_name(candidate: str) -> str:
+    """First of candidate, base(2).epub, base(3).epub ... that does not exist."""
+    m = _NUMBERED.match(candidate)
+    base = m.group(1) if m else candidate[:-5]
+    n = int(m.group(2)) + 1 if m else 2
     while os.path.lexists(candidate):
         candidate = f"{base}({n}).epub"
         n += 1
@@ -218,8 +226,8 @@ def _split_body(heading_html: str, para_html: list[str], limit: int) -> list[str
 def build_epub(output_path: str, title: str, author: str, language: str, sections: list[Section],
                publisher: str = "", cover: cover_mod.CoverImage | None = None, indent: bool = True,
                line_height: str = "", progress=None, cancel: threading.Event | None = None,
-               split_bytes: int = chap.CHAPTER_SPLIT_BYTES) -> tuple[int, int]:
-    """Write the EPUB atomically. Returns (nav entries, xhtml files)."""
+               split_bytes: int = chap.CHAPTER_SPLIT_BYTES) -> tuple[str, int, int]:
+    """Write the EPUB atomically. Returns (path written, nav entries, xhtml files)."""
     uid = str(uuid.uuid4())
     title = title.strip() or default_title(output_path)
     manifest: list[str] = []
@@ -290,15 +298,27 @@ def build_epub(output_path: str, title: str, author: str, language: str, section
 
     if cancel is not None and cancel.is_set():
         raise Cancelled()
-    _write_zip(output_path, files)
-    return play, sum(1 for name, _ in files if name.endswith(".xhtml") and name != "OEBPS/cover.xhtml")
+    written = _write_zip(output_path, files)
+    return written, play, sum(1 for name, _ in files if name.endswith(".xhtml") and name != "OEBPS/cover.xhtml")
 
 
-def _write_zip(output_path: str, files: list[tuple[str, bytes]]) -> None:
+def _reserve_output(output_path: str) -> str:
+    """Create the first free <name>.epub / <name>(n).epub exclusively and return it."""
+    candidate = output_path
+    while True:
+        candidate = free_output_name(candidate)
+        try:
+            with open(candidate, "xb"):
+                return candidate
+        except FileExistsError:
+            continue
+
+
+def _write_zip(output_path: str, files: list[tuple[str, bytes]]) -> str:
     """mimetype first and stored, then everything else deflated. Written to a
     .part file in the same folder and renamed, so a crash never leaves a
     truncated .epub behind."""
-    tmp = output_path + ".part"
+    tmp = f"{output_path}.{os.getpid()}-{threading.get_ident()}.part"
     try:
         with zipfile.ZipFile(tmp, "w") as z:
             info = zipfile.ZipInfo("mimetype", date_time=(1980, 1, 1, 0, 0, 0))
@@ -308,7 +328,18 @@ def _write_zip(output_path: str, files: list[tuple[str, bytes]]) -> None:
                        compress_type=zipfile.ZIP_DEFLATED)
             for name, data in files:
                 z.writestr(name, data, compress_type=zipfile.ZIP_DEFLATED)
-        os.replace(tmp, output_path)
+        # Another run may have taken the name while this one was building:
+        # claim the first free name atomically, then move the result onto it.
+        final = _reserve_output(output_path)
+        try:
+            os.replace(tmp, final)
+        except BaseException:
+            try:
+                os.remove(final)
+            except OSError:
+                pass
+            raise
+        return final
     except BaseException:
         try:
             os.remove(tmp)
@@ -355,7 +386,7 @@ def convert(loaded: Loaded, opts: Options, title: str = "", chapters: list[Chapt
         cover_img = cover_mod.make_cover(title, opts.author, lang)
 
     out = output_path or output_path_for(loaded.path)
-    nav, nfiles = build_epub(out, title, opts.author, lang, sections, publisher=opts.publisher,
+    out, nav, nfiles = build_epub(out, title, opts.author, lang, sections, publisher=opts.publisher,
                              cover=cover_img, indent=opts.indent, line_height=opts.line_height,
                              progress=progress, cancel=cancel)
     headings = sum(1 for c in chapters if c.heading)

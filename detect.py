@@ -64,6 +64,19 @@ def display_name(encoding: str) -> str:
     return DISPLAY_NAMES.get(encoding, encoding)
 
 
+def _trim_partial_tail(sample: bytes) -> bytes:
+    """Drop a multibyte character that the sample cut in half at its end, so
+    the legacy code pages are not blamed for one bogus error."""
+    for enc in ("cp949", "shift_jis", "gb18030", "big5", "euc-jp"):
+        try:
+            sample.decode(enc)
+            return sample
+        except UnicodeDecodeError as exc:
+            if exc.start >= len(sample) - 4:
+                return sample[: exc.start]
+    return sample
+
+
 def _bom(data: bytes) -> str | None:
     if data.startswith(codecs.BOM_UTF8):
         return "utf-8-sig"
@@ -115,10 +128,12 @@ def detect(data: bytes) -> Detection:
     if utf16:
         return Detection(utf16, 95)
     try:
-        sample.decode("utf-8")
-        return Detection("utf-8", 100 if len(data) <= SAMPLE_BYTES else 99)
+        data.decode("utf-8")  # whole file: a sample cut inside a multibyte character would fail wrongly
+        return Detection("utf-8", 100)
     except UnicodeDecodeError:
         pass
+    if len(sample) < len(data):
+        sample = _trim_partial_tail(sample)
     # A strict CP949 decode of the whole sample is stronger evidence than any
     # statistical guess for Korean text, which is what this tool mostly sees.
     cp949_text, cp949_bad = _try_decode(sample, "cp949")
@@ -138,6 +153,12 @@ def detect(data: bytes) -> Detection:
         alt = _cjk_alternative(sample)
         return alt or Detection("utf-8", 0)
     enc, conf = guess
+    if cp949_near and not _is_multibyte(enc):
+        # Valid double-byte text never becomes a single-byte code page such as
+        # iso8859-x or cp125x; that guess is noise from an unusual sample.
+        if korean is False:
+            return _cjk_alternative(sample) or Detection("cp949", 60)
+        return Detection("cp949", (90 if korean else 75) if cp949_ok else _near_conf(cp949_bad, len(sample)))
     if enc == "cp949":
         if korean is False:
             # Valid CP949 bytes that read as random syllables and Hanja: this is
@@ -173,6 +194,10 @@ _KANA_RX = re.compile("[\u3040-\u30ff]")
 _HAN_RX = re.compile("[\u4e00-\u9fff\u3400-\u4dbf]")
 
 
+def _is_multibyte(enc: str) -> bool:
+    return enc in _OTHER_DBCS or enc.startswith(("cp949", "euc", "utf", "gb", "big5", "shift", "cp932", "cp936", "cp950"))
+
+
 def _looks_korean(text: str) -> bool | None:
     """True when the everyday syllables are common enough, False when they are
     rare *and* there is other evidence (a Hanja-heavy mix, or plenty of text),
@@ -186,7 +211,10 @@ def _looks_korean(text: str) -> bool | None:
     if share >= COMMON_SHARE:
         return True
     hanja = len(_HAN_RX.findall(head))
-    if share < COMMON_SHARE / 2 and (hanja >= len(syllables) * 0.2 or len(syllables) >= 40):
+    # Misread Chinese or Japanese spreads over many different syllables (the
+    # bytes are effectively random); real Korean, even a repetitive one, does not.
+    spread = len(set(syllables)) >= len(syllables) * 0.3
+    if share < COMMON_SHARE / 2 and (hanja >= len(syllables) * 0.2 or (spread and len(syllables) >= 40)):
         return False
     return None
 
