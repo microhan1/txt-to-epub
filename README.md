@@ -57,3 +57,5 @@ python main.py novel.txt --encoding auto --chapter-pattern "^제\d+장" --title 
 ## 라이선스
 
 MIT. [LICENSE](LICENSE) 참조.
+
+배포하는 exe에는 Python, Tcl/Tk 등 제3자 구성 요소가 함께 들어 있습니다. 구성 요소와 라이선스 전문은 [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt)에 있습니다.

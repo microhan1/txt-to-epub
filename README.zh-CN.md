@@ -57,3 +57,5 @@ python main.py novel.txt --encoding auto --chapter-pattern "^第.+章" --title "
 ## 许可证
 
 MIT。见 [LICENSE](LICENSE)。
+
+发布的 exe 还包含 Python、Tcl/Tk 等第三方组件，组件及其许可证全文见 [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt)。

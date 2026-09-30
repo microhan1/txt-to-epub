@@ -57,3 +57,5 @@ python main.py novel.txt --encoding auto --chapter-pattern "^第.+話" --title "
 ## ライセンス
 
 MIT。[LICENSE](LICENSE) を参照。
+
+配布している exe には Python、Tcl/Tk などのサードパーティ製コンポーネントも含まれています。コンポーネントとライセンス全文は [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt) にあります。

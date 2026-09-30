@@ -57,3 +57,5 @@ A line is a chapter heading when the whole line matches the pattern. The default
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+The released exe also bundles third-party components such as Python and Tcl/Tk. They and their full license texts are listed in [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt).
