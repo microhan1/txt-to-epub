@@ -52,7 +52,7 @@ python main.py novel.txt --encoding auto --chapter-pattern "^第.+章" --title "
 ## 系列
 
 - 书签工具：[扫描PDF清晰化 (scan-pdf-cleanup)](https://github.com/microhan1/scan-pdf-cleanup) · [裁边 (TrimPDF)](https://github.com/microhan1/TrimPDF) · [跨页拆分 (spread-split)](https://github.com/microhan1/spread-split) · [添加目录书签 (pdf-toc-add)](https://github.com/microhan1/pdf-toc-add)
-- [书签](https://github.com/microhan1/chaekgalpi)
+- [书签图书馆（Chaekgalpi Library）](https://chaekgalpi.co.kr/?utm_source=github&utm_medium=referral&utm_campaign=tool_cta&utm_content=txttoepub) — 记录读过的书和读书笔记的网页服务（仅韩语）
 
 ## 许可证
 
