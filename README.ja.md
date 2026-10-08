@@ -52,7 +52,7 @@ python main.py novel.txt --encoding auto --chapter-pattern "^第.+話" --title "
 ## シリーズ
 
 - しおりツール: [スキャンPDF補正 (scan-pdf-cleanup)](https://github.com/microhan1/scan-pdf-cleanup) · [余白トリミング (TrimPDF)](https://github.com/microhan1/TrimPDF) · [見開き分割 (spread-split)](https://github.com/microhan1/spread-split) · [目次しおり追加 (pdf-toc-add)](https://github.com/microhan1/pdf-toc-add)
-- [しおりライブラリ（Chaekgalpi Library）](https://chaekgalpi.co.kr/?utm_source=github&utm_medium=referral&utm_campaign=tool_cta&utm_content=txttoepub) — 読んだ本と読書記録を残すウェブサービス（韓国語のみ）
+- [しおりライブラリ（Chaekgalpi Library）](https://chaekgalpi.co.kr/tools/txttoepub?utm_source=github&utm_medium=referral&utm_campaign=tool_cta&utm_content=txttoepub) — 読んだ本と読書記録を残すウェブサービス（韓国語のみ）
 
 ## ライセンス
 
