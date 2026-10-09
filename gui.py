@@ -104,7 +104,6 @@ class App:
     def __init__(self, initial_files: list[str] | None = None) -> None:
         self.root = TkinterDnD.Tk() if _HAS_DND else tk.Tk()
         self.root.geometry("1320x860")
-        self.root.minsize(1200, 740)
 
         self.files: list[FileState] = []
         self.current: FileState | None = None
@@ -135,6 +134,10 @@ class App:
 
         self._build()
         self._apply_texts()
+        # The window may not shrink below what the three panels ask for: at the old fixed minimum (1200x740)
+        # the style block at the bottom of panel 3 was cut off (v0.1.1).
+        self.root.update_idletasks()
+        self.root.minsize(max(1200, self.root.winfo_reqwidth()), max(740, self.root.winfo_reqheight()))
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         if initial_files:
             self.root.after(100, lambda: self.add_paths(initial_files))
@@ -233,7 +236,7 @@ class App:
         self.cmb_enc.bind("<<ComboboxSelected>>", self._on_encoding)
         self.lbl_enc_warn = ttk.Label(f, foreground="#c00", wraplength=340)
         self.lbl_enc_warn.grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        self.txt_preview = tk.Text(f, wrap="word", state="disabled", height=10, width=30,
+        self.txt_preview = tk.Text(f, wrap="word", state="disabled", height=8, width=30,
                                    highlightthickness=2, highlightbackground="#ccc", highlightcolor="#ccc")
         self.txt_preview.grid(row=3, column=0, columnspan=2, sticky="nsew", pady=(6, 0))
         self.lbl_preview_msg = ttk.Label(f, foreground="#555", wraplength=340)
@@ -262,7 +265,7 @@ class App:
         self.lbl_pattern_err.grid(row=2, column=0, columnspan=2, sticky="w")
 
         cols = ("on", "no", "title", "line", "chars")
-        self.tree = ttk.Treeview(f, columns=cols, show="headings", selectmode="browse", height=12)
+        self.tree = ttk.Treeview(f, columns=cols, show="headings", selectmode="browse", height=8)
         for c, w, anchor in (("on", 40, "center"), ("no", 40, "e"), ("title", 220, "w"),
                              ("line", 70, "e"), ("chars", 80, "e")):
             self.tree.column(c, width=w, minwidth=w, anchor=anchor, stretch=(c == "title"))

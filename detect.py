@@ -319,6 +319,9 @@ def read_file(path: str, encoding: str = AUTO) -> tuple[str, Detection, int]:
     det = detect(data)
     enc = det.encoding if encoding == AUTO else encoding
     text, bad = decode(data, enc)
+    # CRLF / lone CR -> LF: a Text widget draws a stray CR as a glyph (CP437 0x0D is a music note) and a CR
+    # would otherwise travel into the EPUB's paragraphs.
+    text = text.replace(chr(13) + chr(10), chr(10)).replace(chr(13), chr(10))
     if not text.strip():
         raise EmptyFile(path)
     return text, det, bad
