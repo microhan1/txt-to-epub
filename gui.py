@@ -15,10 +15,15 @@ import tkinter as tk
 from dataclasses import dataclass, field
 from tkinter import filedialog, messagebox, ttk
 
+import webbrowser
+
 import chapters as chap
 import detect
 import epub_build as core
 import i18n
+import prefs as prefs_mod
+import update_check
+import version
 from epub_build import Options
 from i18n import t
 
@@ -31,6 +36,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 PREVIEW_CHARS = 3000
 CHECK = chr(0x2714)
+UPDATE_BG, UPDATE_BORDER = "#fff6d6", "#d9b84a"  # the new-version line: a soft, non-modal band
 LARGE_MB = detect.WARN_SIZE / (1024 * 1024)
 
 
@@ -117,6 +123,9 @@ class App:
         self._syncing = False
 
         saved = _saved_options(i18n.load_settings())
+        self.prefs = prefs_mod.load()
+        self._update_info: update_check.UpdateInfo | None = None
+        self.var_update_check = tk.BooleanVar(value=self.prefs.update_check)
         self.var_lang = tk.StringVar(value=i18n.LANG_NAMES[i18n.current_lang()])
         self.var_encoding = tk.StringVar(value=detect.AUTO)
         self.var_pattern = tk.StringVar(value=saved.pattern)
@@ -137,8 +146,12 @@ class App:
         # The window may not shrink below what the three panels ask for: at the old fixed minimum (1200x740)
         # the style block at the bottom of panel 3 was cut off (v0.1.1).
         self.root.update_idletasks()
-        self.root.minsize(max(1200, self.root.winfo_reqwidth()), max(740, self.root.winfo_reqheight()))
+        self._min_size = (max(1200, self.root.winfo_reqwidth()), max(740, self.root.winfo_reqheight()))
+        self.root.minsize(*self._min_size)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        # once a day, 1.5 s after the window is up, on a background thread; silent on any failure
+        update_check.check_async(self.root, version.UPDATE_SLUG, version.APP_VERSION, self.prefs,
+                                 self._on_update_result)
         if initial_files:
             self.root.after(100, lambda: self.add_paths(initial_files))
 
@@ -157,10 +170,13 @@ class App:
         head.grid(row=0, column=0, sticky="ew")
         head.columnconfigure(0, weight=1)
         self._reg(ttk.Label(head, font=("", 15, "bold")), "app_title").grid(row=0, column=0, sticky="w")
-        self._reg(ttk.Label(head), "lbl_language").grid(row=0, column=1, padx=(0, 6))
+        self.chk_update = self._reg(ttk.Checkbutton(head, variable=self.var_update_check,
+                                                    command=self._on_update_toggle), "opt_update_check")
+        self.chk_update.grid(row=0, column=1, padx=(0, 16))
+        self._reg(ttk.Label(head), "lbl_language").grid(row=0, column=2, padx=(0, 6))
         self.cmb_lang = ttk.Combobox(head, state="readonly", width=10, textvariable=self.var_lang,
                                      values=[i18n.LANG_NAMES[c] for c in i18n.LANGS])
-        self.cmb_lang.grid(row=0, column=2)
+        self.cmb_lang.grid(row=0, column=3)
         self.cmb_lang.bind("<<ComboboxSelected>>", self._on_lang)
 
         # ---- files
@@ -207,9 +223,19 @@ class App:
         sb.grid(row=0, column=1, sticky="ns")
         self.txt_log.configure(yscrollcommand=sb.set)
 
+        # ---- new-version notice: one line, hidden until the server says a newer version exists
+        self.frm_update = tk.Frame(root, bg=UPDATE_BG, highlightthickness=1, highlightbackground=UPDATE_BORDER)
+        self.lbl_update = tk.Label(self.frm_update, bg=UPDATE_BG, anchor="w")
+        self.lbl_update.pack(side="left", fill="x", expand=True, padx=(10, 8), pady=5)
+        self.btn_update_later = self._reg(ttk.Button(self.frm_update, command=self._update_later), "btn_later")
+        self.btn_update_later.pack(side="right", padx=(6, 8), pady=4)
+        self.btn_update_open = self._reg(ttk.Button(self.frm_update, command=self._update_open), "btn_update")
+        self.btn_update_open.pack(side="right", pady=4)
+        # gridded only when there is something to say (see _show_update_notice)
+
         # ---- bottom
         bot = ttk.Frame(root, padding=(12, 4, 12, 10))
-        bot.grid(row=4, column=0, sticky="ew")
+        bot.grid(row=5, column=0, sticky="ew")
         bot.columnconfigure(0, weight=1)
         self.progress = ttk.Progressbar(bot, mode="determinate")
         self.progress.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 6))
@@ -364,6 +390,8 @@ class App:
         self._refresh_file_panel()
         if self._status_key:
             self._set_status(self._status_key, **self._status_kwargs)
+        if self._update_info is not None:
+            self._show_update_notice()
 
     def _set_status(self, key: str, **kwargs) -> None:
         self._status_key, self._status_kwargs = key, kwargs
@@ -409,9 +437,64 @@ class App:
         ).validated()
 
     def _save_options(self) -> None:
+        self.prefs.update_check = bool(self.var_update_check.get())
         settings = i18n.load_settings()
         settings["options"] = dataclasses.asdict(self.options())
+        settings.update(dataclasses.asdict(self.prefs))
         i18n.save_settings(settings)
+
+    # ------------------------------------------------------------ new version notice
+    def _on_update_result(self, info: update_check.UpdateInfo | None, answered: bool) -> None:
+        """Tk thread. The day is recorded only when the server answered, so an
+        offline start asks again next time."""
+        if self._closing:
+            return
+        if answered:
+            self.prefs.update_check_last = update_check.today()
+            self._save_options()
+        if info is not None and self.var_update_check.get():
+            self._update_info = info
+            self._show_update_notice()
+
+    def _show_update_notice(self) -> None:
+        info = self._update_info
+        if info is None:
+            self.frm_update.grid_remove()
+            return
+        self.lbl_update.configure(text=t("update_available", latest=info.latest, current=info.current))
+        if not self.frm_update.winfo_manager():
+            self.frm_update.grid(row=4, column=0, sticky="ew", padx=12, pady=(2, 0))
+            # The band takes its height from the middle row. At the minimum window size that
+            # row has no slack, so the minimum grows by the band and the window follows.
+            self.root.update_idletasks()
+            w, h = self._min_size
+            self.root.minsize(w, h + self.frm_update.winfo_reqheight() + 2)
+
+    def _hide_update_notice(self) -> None:
+        self._update_info = None
+        self.frm_update.grid_remove()
+        self.root.minsize(*self._min_size)
+
+    def _update_open(self) -> None:
+        """The tools page, never a download: the site serves the download."""
+        info = self._update_info
+        if info is not None and info.url.startswith(update_check.SITE):
+            try:
+                webbrowser.open(info.url)
+            except Exception:
+                pass
+        self._hide_update_notice()
+
+    def _update_later(self) -> None:
+        if self._update_info is not None:
+            self.prefs.update_check_skipped = self._update_info.latest  # a newer one is shown again
+            self._save_options()
+        self._hide_update_notice()
+
+    def _on_update_toggle(self) -> None:
+        self._save_options()
+        if not self.var_update_check.get():
+            self._hide_update_notice()
 
     # ------------------------------------------------------------ files
     def _on_drop(self, event) -> None:

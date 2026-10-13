@@ -2,7 +2,7 @@
 
 [한국어](README.md) · [中文](README.zh-CN.md) · [日本語](README.ja.md)
 
-Turns a plain-text novel (.txt) into an EPUB you can read on a Ridipaper, Crema or Kindle. The encoding (EUC-KR, CP949, UTF-8, UTF-16) is detected automatically and chapters are split automatically. No server, no install, the original file is never touched.
+Turns a plain-text novel (.txt) into an EPUB you can read on a Ridipaper, Crema or Kindle. The encoding (EUC-KR, CP949, UTF-8, UTF-16) is detected automatically and chapters are split automatically. No server (except the update check, which can be turned off), no install, the original file is never touched.
 
 ![Before and after](docs/before_after.png)
 
@@ -41,6 +41,16 @@ A line is a chapter heading when the whole line matches the pattern. The default
 | Chinese | `第3章`, `第十二回` |
 | Japanese | `第3話 帰郷`, `プロローグ` |
 
+## Update check
+
+When it starts, the tool sends only its name (`txttoepub`) and version to the Chaekgalpi server (chaekgalpi.co.kr) to see whether a newer version exists. No file is sent, it checks once a day, and you can turn it off in the settings (the **Check for updates** box at the top). The check runs in the background after the window is up; when there is no connection nothing is shown.
+
+If a newer version exists, a one-line notice appears at the bottom of the window. **Update** opens the Chaekgalpi tools page; **Later** hides that version (a newer one is shown again). Nothing is downloaded or replaced automatically.
+
+![Update notice line](docs/update_notice.png)
+
+*Figure: the notice line, shown with a faked server reply (new version 0.2.0) in a test run. Korean UI.*
+
 ## What it does not do
 
 - No EPUB3, MOBI or AZW3. EPUB2 only.
@@ -48,6 +58,7 @@ A line is a chapter heading when the whole line matches the pattern. The default
 - No merging of several TXT files into one EPUB.
 - Documents with images (HTML, DOCX) are out of scope.
 - No DRM removal and no web-novel scraping.
+- It never downloads or installs a new version by itself.
 
 ## Series
 

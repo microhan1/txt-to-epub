@@ -116,5 +116,9 @@
   "cli_encoding_info": "  encoding: {enc} ({confidence}%) → using {used}",
   "cli_confirm_hint": " [y/N] ",
   "cli_no_input": "No TXT files to process",
-  "cli_need_yes": "A confirmation is needed but this is not an interactive terminal. Run again with -y"
+  "cli_need_yes": "A confirmation is needed but this is not an interactive terminal. Run again with -y",
+  "opt_update_check": "Check for updates",
+  "update_available": "Version {latest} is available (current {current})",
+  "btn_update": "Update",
+  "btn_later": "Later"
 }

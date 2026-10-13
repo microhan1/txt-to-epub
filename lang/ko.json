@@ -116,5 +116,9 @@
   "cli_encoding_info": "  인코딩: {enc} ({confidence}%) → {used} 적용",
   "cli_confirm_hint": " [y/N] ",
   "cli_no_input": "처리할 TXT 파일이 없습니다",
-  "cli_need_yes": "확인이 필요하지만 대화형 터미널이 아닙니다. -y를 붙여 다시 실행하세요"
+  "cli_need_yes": "확인이 필요하지만 대화형 터미널이 아닙니다. -y를 붙여 다시 실행하세요",
+  "opt_update_check": "새 버전 확인",
+  "update_available": "새 버전이 나왔습니다: {latest} (현재 {current})",
+  "btn_update": "업데이트",
+  "btn_later": "다음에"
 }
