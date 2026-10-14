@@ -30,6 +30,16 @@ class UpdateInfo:
     latest: str
     current: str
     url: str
+    url_en: str = ""  # the English tools page, when the server offers one (`urlEn`)
+
+
+def page_url(info: UpdateInfo, ui_lang: str) -> str:
+    """Which page [Update] opens: the Korean page for a Korean UI, the English
+    page for every other UI language when the server gave one. Decided at click
+    time, so switching the language after the notice appeared still counts."""
+    if ui_lang != "ko" and info.url_en:
+        return info.url_en
+    return info.url
 
 
 def today() -> str:
@@ -70,7 +80,10 @@ def interpret(data: dict | None, version: str, skipped: str = "") -> UpdateInfo 
     latest = latest.strip()
     if latest == (skipped or "").strip():
         return None
-    return UpdateInfo(latest, version, url)
+    url_en = data.get("urlEn")
+    if not isinstance(url_en, str) or not url_en.startswith(SITE):
+        url_en = ""  # null, missing or another site: the Korean page is used instead
+    return UpdateInfo(latest, version, url, url_en)
 
 
 def check_async(root, slug: str, version: str, prefs, on_result: Callable[[UpdateInfo | None, bool], None], *,

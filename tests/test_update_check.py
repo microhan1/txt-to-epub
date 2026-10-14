@@ -194,6 +194,36 @@ def test_odd_versions_show_nothing(latest):
     assert uc.interpret(dict(OK, latest=latest), "0.1.2") is None
 
 
+# ------------------------------------------------------------------ which page [Update] opens
+EN_URL = "https://chaekgalpi.co.kr/en/tools/txttoepub?utm_source=app&utm_medium=update"
+
+
+def test_korean_ui_opens_the_korean_page_even_with_url_en():
+    info = uc.interpret(dict(OK, urlEn=EN_URL), "0.1.2")
+    assert uc.page_url(info, "ko") == OK["url"]
+
+
+@pytest.mark.parametrize("lang", ["en", "ja", "zh-CN"])
+def test_other_ui_languages_open_the_english_page_when_offered(lang):
+    info = uc.interpret(dict(OK, urlEn=EN_URL), "0.1.2")
+    assert uc.page_url(info, lang) == EN_URL
+
+
+@pytest.mark.parametrize("url_en", [None, "", "https://github.com/microhan1/txt-to-epub", "http://chaekgalpi.co.kr/en/x", 7])
+def test_english_ui_falls_back_to_the_korean_page(url_en):
+    info = uc.interpret(dict(OK, urlEn=url_en), "0.1.2")
+    assert info.url_en == "" and uc.page_url(info, "en") == OK["url"]
+
+
+def test_missing_url_en_field_falls_back():
+    info = uc.interpret(OK, "0.1.2")  # the v1.95 server has no urlEn at all
+    assert uc.page_url(info, "en") == OK["url"] and uc.page_url(info, "ko") == OK["url"]
+
+
+def test_url_en_does_not_rescue_a_bad_url():
+    assert uc.interpret(dict(OK, url="https://evil.example/", urlEn=EN_URL), "0.1.2") is None
+
+
 def test_version_constants():
     assert version.UPDATE_SLUG == "txttoepub"
     parts = version.APP_VERSION.split(".")

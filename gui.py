@@ -478,11 +478,13 @@ class App:
     def _update_open(self) -> None:
         """The tools page, never a download: the site serves the download."""
         info = self._update_info
-        if info is not None and info.url.startswith(update_check.SITE):
-            try:
-                webbrowser.open(info.url)
-            except Exception:
-                pass
+        if info is not None:
+            target = update_check.page_url(info, i18n.current_lang())
+            if target.startswith(update_check.SITE):
+                try:
+                    webbrowser.open(target)
+                except Exception:
+                    pass
         self._hide_update_notice()
 
     def _update_later(self) -> None:
