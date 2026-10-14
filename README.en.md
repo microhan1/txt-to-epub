@@ -63,7 +63,7 @@ If a newer version exists, a one-line notice appears at the bottom of the window
 ## Series
 
 - Chaekgalpi Tools: [Scan PDF Cleanup (scan-pdf-cleanup)](https://github.com/microhan1/scan-pdf-cleanup) · [Margin crop (TrimPDF)](https://github.com/microhan1/TrimPDF) · [Two-page split (spread-split)](https://github.com/microhan1/spread-split) · [TOC bookmarks (pdf-toc-add)](https://github.com/microhan1/pdf-toc-add)
-- [Chaekgalpi Library](https://chaekgalpi.co.kr/tools/txttoepub?utm_source=github&utm_medium=referral&utm_campaign=tool_cta&utm_content=txttoepub) — a web service for logging the books you read and writing reviews (Korean only)
+- [Chaekgalpi Library](https://chaekgalpi.co.kr/en/tools/txttoepub?utm_source=github&utm_medium=referral&utm_campaign=tool_cta&utm_content=txttoepub) — a web service for logging the books you read and writing reviews (tools page in English; the reading-log service itself is in Korean)
 
 ## License
 
