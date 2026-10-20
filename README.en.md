@@ -32,7 +32,7 @@ python main.py novel.txt --encoding auto --chapter-pattern "^Chapter \d+" --titl
 
 ## Chapter pattern examples
 
-A line is a chapter heading when the whole line matches the pattern. The default pattern catches all of these, and you can type your own regular expression. The patterns live in `patterns.json`.
+A line is a chapter heading when, with surrounding whitespace removed, it **starts** with the pattern and is at most 80 characters long. So `제1장 떠나며` is caught even with a subtitle after the number, but a body sentence that begins with `Prologue` or `1. ` can be taken for a chapter too; untick it in the list and it joins the previous chapter's text. The default pattern catches all of these, and you can type your own regular expression. The patterns live in `patterns.json`.
 
 | Language | Examples |
 |---|---|
