@@ -8,12 +8,15 @@ import dataclasses
 
 import i18n
 
+MERGE_MODES = ("each", "one")
+
 
 @dataclasses.dataclass
 class Prefs:
     update_check: bool = True  # once a day, ask the tools site whether a newer version exists
     update_check_last: str = ""  # YYYY-MM-DD of the last check the server answered
     update_check_skipped: str = ""  # "Later" was pressed for this version: do not show it again
+    merge_mode: str = "each"  # "each": one EPUB per file; "one": all files into one book
 
 
 def load() -> Prefs:
@@ -29,6 +32,7 @@ def load() -> Prefs:
         update_check=typed("update_check", bool),
         update_check_last=typed("update_check_last", str).strip()[:10],
         update_check_skipped=typed("update_check_skipped", str).strip()[:32],
+        merge_mode=typed("merge_mode", str) if typed("merge_mode", str) in MERGE_MODES else "each",
     )
 
 

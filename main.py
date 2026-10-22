@@ -4,6 +4,7 @@
     python main.py novel.txt [more.txt ...]          -> CLI
     python main.py novel.txt --encoding auto --chapter-pattern REGEX \\
                    --title TITLE --author AUTHOR --lang ko [--cover cover.jpg]
+    python main.py folder_or_files --merge [--output book.epub]   -> one EPUB, one chapter per file
 
 --lang is the language of the *text* (dc:language in the EPUB), as the PRD
 specifies. The interface language is --ui-lang.
@@ -61,6 +62,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--indent", dest="indent", action="store_true", default=True, help=t("cli_indent"))
     g.add_argument("--no-indent", dest="indent", action="store_false", help=t("cli_no_indent"))
     p.add_argument("--line-height", choices=core.LINE_HEIGHTS[1:], default="", help=t("cli_line_height"))
+    p.add_argument("--merge", action="store_true", help=t("cli_merge"))
+    p.add_argument("--output", default="", metavar="FILE", help=t("cli_output"))
     p.add_argument("-y", "--yes", action="store_true", help=t("cli_yes"))
     p.add_argument("--ui-lang", choices=i18n.LANGS, help=t("cli_ui_lang"))
     p.add_argument("--gui", action="store_true", help=t("cli_gui"))
@@ -77,6 +80,7 @@ def _options_from(args: argparse.Namespace) -> core.Options:
         encoding=args.encoding, pattern=args.chapter_pattern, split_chapters=not args.no_chapters,
         paragraph_mode=args.paragraph, text_lang=args.lang, author=args.author, publisher=args.publisher,
         cover_mode=cover_mode, cover_path=cover_path, indent=args.indent, line_height=args.line_height,
+        merge=args.merge,
     )
 
 
@@ -93,6 +97,76 @@ def _confirm(question: str, yes: bool) -> bool:
         print(t("cli_need_yes"), file=sys.stderr)
         return False
     return answer in ("y", "yes")
+
+
+def _load_cli(path: str, idx: int, total: int, opts: core.Options, yes: bool) -> core.Loaded | None:
+    """Announce, size-check and decode one input. None (after a message) when it is skipped."""
+    name = os.path.basename(path)
+    print(t("cli_processing", index=idx, total=total, name=name))
+    try:
+        size = os.path.getsize(path)
+        if size > detect.WARN_SIZE and not _confirm(
+                t("warn_large_file", name=name, size=f"{size / 1048576:.0f}"), yes):
+            print(t("log_skipped", name=name))
+            return None
+        loaded = core.load_text(path, opts.encoding)
+    except detect.EmptyFile:
+        print(f"{name}: {t('err_empty')}", file=sys.stderr)
+        return None
+    except (LookupError, UnicodeError):
+        print(t("err_decode_failed", name=name), file=sys.stderr)
+        return None
+    except OSError:
+        print(t("err_open_failed", name=name), file=sys.stderr)
+        return None
+    except Exception as exc:  # a bug must be visible, not hidden behind "cannot open"
+        print(t("err_file_failed", name=name, error=f"{type(exc).__name__}: {exc}"), file=sys.stderr)
+        return None
+    print(t("cli_encoding_info", enc=loaded.detection.display, confidence=loaded.detection.confidence,
+            used=detect.display_name(loaded.encoding)))
+    if loaded.replaced:
+        print(t("log_replaced", name=name, count=loaded.replaced))
+    return loaded
+
+
+def _run_merge(args: argparse.Namespace, files: list[str], opts: core.Options) -> int:
+    """--merge: every input file becomes one chapter of a single EPUB, in number order."""
+    if args.chapter_pattern != chap.DEFAULT_PATTERN or args.no_chapters:
+        print(t("warn_merge_ignores_pattern"))
+    files = core.sort_natural(files)
+    title = args.title.strip()[:core.MAX_TITLE_CHARS] or core.book_title_for(args.inputs, files)
+    print(t("cli_merge_title", title=title))
+    loadeds: list[core.Loaded] = []
+    failures = 0
+    for idx, path in enumerate(files, 1):
+        loaded = _load_cli(path, idx, len(files), opts, args.yes)
+        if loaded is None:
+            failures += 1
+        else:
+            loadeds.append(loaded)
+    if not loadeds:
+        print(t("err_merge_none"), file=sys.stderr)
+        return 2
+    if len(loadeds) > core.MANY_FILES and not _confirm(
+            t("warn_many_chapters", name=title, count=len(loadeds)), args.yes):
+        print(t("status_cancelled"))
+        return 1
+    parts = core.merge_parts(loadeds, title, lambda n: t("merge_chapter_n", n=n))
+    output = args.output.strip() or None
+    if output and not output.lower().endswith(".epub"):
+        output += ".epub"
+    try:
+        result = core.convert_many(parts, opts, title, output)
+    except KeyboardInterrupt:
+        print("\n" + t("status_cancelled"))
+        return 130
+    except Exception as exc:
+        print(t("err_file_failed", name=title, error=f"{type(exc).__name__}: {exc}"), file=sys.stderr)
+        return 1
+    print(t("log_merged", files=len(parts), count=result.chapters))
+    print(t("log_saved", path=result.output_path))
+    print(t("msg_done", count=1))
+    return 1 if failures else 0
 
 
 def run_cli(args: argparse.Namespace) -> int:
@@ -126,38 +200,16 @@ def run_cli(args: argparse.Namespace) -> int:
             print(t("err_cover_open", name=os.path.basename(opts.cover_path)), file=sys.stderr)
             return 2
 
+    if args.merge:
+        return _run_merge(args, files, opts)
+
     failures = processed = 0
     for idx, path in enumerate(files, 1):
         name = os.path.basename(path)
-        print(t("cli_processing", index=idx, total=len(files), name=name))
-        try:
-            size = os.path.getsize(path)
-            if size > detect.WARN_SIZE and not _confirm(
-                    t("warn_large_file", name=name, size=f"{size / 1048576:.0f}"), args.yes):
-                print(t("log_skipped", name=name))
-                failures += 1
-                continue
-            loaded = core.load_text(path, opts.encoding)
-        except detect.EmptyFile:
-            print(f"{name}: {t('err_empty')}", file=sys.stderr)
+        loaded = _load_cli(path, idx, len(files), opts, args.yes)
+        if loaded is None:
             failures += 1
             continue
-        except (LookupError, UnicodeError):
-            print(t("err_decode_failed", name=name), file=sys.stderr)
-            failures += 1
-            continue
-        except OSError:
-            print(t("err_open_failed", name=name), file=sys.stderr)
-            failures += 1
-            continue
-        except Exception as exc:  # a bug must be visible, not hidden behind "cannot open"
-            print(t("err_file_failed", name=name, error=f"{type(exc).__name__}: {exc}"), file=sys.stderr)
-            failures += 1
-            continue
-        print(t("cli_encoding_info", enc=loaded.detection.display, confidence=loaded.detection.confidence,
-                used=detect.display_name(loaded.encoding)))
-        if loaded.replaced:
-            print(t("log_replaced", name=name, count=loaded.replaced))
         title = args.title if args.title and len(files) == 1 else core.default_title(path)
         chapters = core.plan_chapters(loaded, opts, title)
         count = chap.heading_count(chapters)

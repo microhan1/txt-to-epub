@@ -79,6 +79,9 @@ class FileState:
     manual: set[int] = field(default_factory=set)
     disabled: set[int] = field(default_factory=set)
     gen: int = 0
+    chars: int = 0                     # characters in the decoded text (shown in "one book" rows)
+    included: bool = True              # "one book": this file is in
+    merge_title: str | None = None     # "one book": the chapter title the user typed; None = from the file name
 
     @property
     def name(self) -> str:
@@ -112,6 +115,8 @@ class App:
         self.root.geometry("1320x860")
 
         self.files: list[FileState] = []
+        self.inputs: list[str] = []            # what was dropped or picked, for the one-book title default
+        self.merge_title_user: str | None = None  # the book title typed in "one book"; None = default
         self.current: FileState | None = None
         self.outputs: list[str] = []
         self.cancel_event = threading.Event()
@@ -126,6 +131,7 @@ class App:
         self.prefs = prefs_mod.load()
         self._update_info: update_check.UpdateInfo | None = None
         self.var_update_check = tk.BooleanVar(value=self.prefs.update_check)
+        self.var_merge = tk.StringVar(value=self.prefs.merge_mode)
         self.var_lang = tk.StringVar(value=i18n.LANG_NAMES[i18n.current_lang()])
         self.var_encoding = tk.StringVar(value=detect.AUTO)
         self.var_pattern = tk.StringVar(value=saved.pattern)
@@ -189,14 +195,30 @@ class App:
         self.lst_files = tk.Listbox(files, height=4, activestyle="none", exportselection=False)
         self.lst_files.grid(row=1, column=0, sticky="nsew")
         self.lst_files.bind("<<ListboxSelect>>", self._on_select_file)
+        self.lst_files.bind("<Alt-Up>", lambda e: self.move_selected(-1) or "break")
+        self.lst_files.bind("<Alt-Down>", lambda e: self.move_selected(1) or "break")
         btns = ttk.Frame(files)
-        btns.grid(row=1, column=1, sticky="ns", padx=(8, 0))
+        btns.grid(row=1, column=1, rowspan=2, sticky="ns", padx=(8, 0))
         self.btn_add = self._reg(ttk.Button(btns, command=self._add_files_dialog), "btn_add_files")
         self.btn_add.pack(fill="x")
         self.btn_remove = self._reg(ttk.Button(btns, command=self.remove_selected), "btn_remove")
         self.btn_remove.pack(fill="x", pady=4)
         self.btn_clear = self._reg(ttk.Button(btns, command=self.clear_files), "btn_clear")
         self.btn_clear.pack(fill="x")
+        self._reg(ttk.Label(btns, foreground="#555"), "lbl_order").pack(fill="x", pady=(8, 0))
+        self.btn_up = self._reg(ttk.Button(btns, command=lambda: self.move_selected(-1)), "btn_up")
+        self.btn_up.pack(fill="x")
+        self.btn_down = self._reg(ttk.Button(btns, command=lambda: self.move_selected(1)), "btn_down")
+        self.btn_down.pack(fill="x", pady=(4, 0))
+        # one EPUB per file (as before) or every file one chapter of a single book
+        mode = ttk.Frame(files)
+        mode.grid(row=2, column=0, sticky="w", pady=(6, 0))
+        self.rad_each = self._reg(ttk.Radiobutton(mode, variable=self.var_merge, value="each",
+                                                  command=self._on_merge_mode), "merge_each")
+        self.rad_each.pack(side="left")
+        self.rad_one = self._reg(ttk.Radiobutton(mode, variable=self.var_merge, value="one",
+                                                 command=self._on_merge_mode), "merge_one")
+        self.rad_one.pack(side="left", padx=(16, 0))
         if _HAS_DND:
             for w in (root, self.lbl_drop, self.lst_files):
                 w.drop_target_register(DND_FILES)
@@ -248,6 +270,7 @@ class App:
         self.btn_run = self._reg(ttk.Button(bot, command=self.run), "btn_run")
         self.btn_run.grid(row=1, column=3, padx=(4, 0))
         self._set_status("status_ready")
+        self._apply_mode()
 
     def _build_encoding(self, parent: ttk.Frame) -> None:
         f = self._reg(ttk.LabelFrame(parent, padding=6), "lbl_step_encoding")
@@ -276,8 +299,9 @@ class App:
         top = ttk.Frame(f)
         top.grid(row=0, column=0, columnspan=2, sticky="ew")
         top.columnconfigure(1, weight=1)
-        self._reg(ttk.Checkbutton(top, variable=self.var_split, command=self._on_split), "opt_split_chapters")\
-            .grid(row=0, column=0, columnspan=3, sticky="w")
+        self.chk_split = self._reg(ttk.Checkbutton(top, variable=self.var_split, command=self._on_split),
+                                   "opt_split_chapters")
+        self.chk_split.grid(row=0, column=0, columnspan=3, sticky="w")
         self._reg(ttk.Label(top), "chapter_pattern").grid(row=1, column=0, sticky="w", pady=(4, 0))
         self.cmb_pattern = ttk.Combobox(top, textvariable=self.var_pattern, values=list(chap.PRESET_PATTERNS))
         self.cmb_pattern.grid(row=1, column=1, sticky="ew", padx=6, pady=(4, 0))
@@ -301,6 +325,8 @@ class App:
         sb.grid(row=3, column=1, sticky="ns", pady=(2, 0))
         self.tree.configure(yscrollcommand=sb.set)
         self.tree.bind("<Button-1>", self._on_tree_click)
+        self.tree.bind("<Double-1>", self._on_tree_double)
+        self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
         self.tree.bind("<space>", lambda e: self._toggle_selected())
 
         bottom = ttk.Frame(f)
@@ -434,6 +460,7 @@ class App:
             author=self.var_author.get(), publisher=self.var_publisher.get(),
             cover_mode=self.var_cover_mode.get(), cover_path=self.var_cover_path.get(),
             indent=self.var_indent.get(), line_height=self.var_line_height.get(),
+            merge=self.merging(),
         ).validated()
 
     def _save_options(self) -> None:
@@ -508,13 +535,14 @@ class App:
             self.add_paths(list(paths))
 
     def add_paths(self, paths: list[str]) -> None:
-        found = core.collect_txts(paths)
+        found = core.sort_natural(core.collect_txts(paths))  # 2, 3, ... 10, not 10 before 2
         for p in paths:
             if not os.path.exists(p):
                 self.log("err_open_failed", name=p)
         if not found:
             self.log("err_no_txt_found")
             return
+        self.inputs.extend(p for p in paths if os.path.exists(p))
         known = {os.path.normcase(f.path) for f in self.files}
         for path in found:
             if os.path.normcase(path) in known:
@@ -559,9 +587,26 @@ class App:
         for f in self.files:
             f.gen += 1
         self.files.clear()
+        self.inputs.clear()
+        self.merge_title_user = None
         self.current = None
         self.lst_files.delete(0, "end")
         self._refresh_file_panel()
+
+    def move_selected(self, delta: int) -> None:
+        """Move the selected file up (-1) or down (+1): the order of the chapters in "one book"."""
+        sel = self.lst_files.curselection()
+        if not sel or (self.worker and self.worker.is_alive()):
+            return
+        i = sel[0]
+        j = i + delta
+        if not 0 <= j < len(self.files):
+            return
+        self.files[i], self.files[j] = self.files[j], self.files[i]
+        name = self.lst_files.get(i)
+        self.lst_files.delete(i)
+        self.lst_files.insert(j, name)
+        self._select_index(j)
 
     def _select_index(self, idx: int) -> None:
         self.lst_files.selection_clear(0, "end")
@@ -597,8 +642,10 @@ class App:
             error_text = ""
             bad_pattern = False
             starts: list[int] = []
+            chars = 0
             try:
                 loaded = core.load_text(state.path, enc)
+                chars = sum(len(line) for line in loaded.lines)
                 if split:
                     rx = chap.compile_pattern(pattern)
                     starts = chap.find_starts(loaded.lines, rx)
@@ -622,6 +669,7 @@ class App:
                 state.loaded = loaded
                 state.error = error
                 state.error_text = error_text
+                state.chars = chars
                 state.detected = starts
                 state.split = split
                 state.pattern_applied = pattern_key
@@ -636,6 +684,8 @@ class App:
                     self.log(error, name=state.name, error=error_text)
                 if state is self.current:
                     self._refresh_file_panel()
+                elif self.merging():
+                    self._refresh_tree()
 
             self.root.after(0, done)
 
@@ -662,11 +712,106 @@ class App:
         state.split = self.var_split.get()
         state.pattern_applied = self._pattern_key()
 
+    # ------------------------------------------------------------ one book
+    def merging(self) -> bool:
+        return self.var_merge.get() == "one"
+
+    def _on_merge_mode(self) -> None:
+        mode = self.var_merge.get()
+        self.prefs.merge_mode = mode if mode in prefs_mod.MERGE_MODES else "each"
+        self._save_options()
+        self.lbl_pattern_err.configure(text="")
+        self._apply_mode()
+        self._refresh_file_panel()
+
+    def _apply_mode(self, running: bool = False) -> None:
+        """Per file: the pattern tools work. One book: the order buttons work instead."""
+        one = self.merging()
+        for w in (self.chk_split, self.btn_redetect, self.ent_line, self.btn_add_chapter):
+            w.configure(state="disabled" if one or running else "normal")
+        self.cmb_pattern.configure(state="disabled" if one or running else "normal")
+        for w in (self.btn_up, self.btn_down):
+            w.configure(state="normal" if one and not running else "disabled")
+        # "one book": the start-line column shows the file name and takes the room of the
+        # character-count column, which is per-file information
+        self.tree.configure(displaycolumns=("on", "no", "title", "line") if one else "#all")
+        self.tree.column("line", width=170 if one else 70, anchor="w" if one else "e")
+
+    def book_title(self) -> str:
+        """The one-book title: what the user typed, else the folder's name or what the file names share."""
+        if self.merge_title_user is not None:
+            return self.merge_title_user
+        return core.book_title_for(self.inputs, [f.path for f in self.files])
+
+    def _merge_states(self) -> list[FileState]:
+        return [f for f in self.files if f.loaded is not None and not f.loading]
+
+    def merge_parts(self, states: list[FileState] | None = None) -> list[core.Part]:
+        """Chapters of the one book, in file order, with the user's titles applied."""
+        states = self._merge_states() if states is None else states
+        parts = core.merge_parts([s.loaded for s in states], self.book_title(),
+                                 lambda n: t("merge_chapter_n", n=n))
+        for st, part in zip(states, parts):
+            if st.merge_title is not None:
+                part.title = st.merge_title
+        return parts
+
+    def set_chapter_title(self, index: int, title: str) -> None:
+        """Rename the chapter made from files[index]; an empty title goes back to the file name."""
+        self.files[index].merge_title = title.strip() or None
+        self._refresh_tree()
+
+    def _on_tree_select(self, _event=None) -> None:
+        """In "one book" the chapter rows are the files: selecting a row selects the file."""
+        if self._syncing or not self.merging():
+            return
+        sel = self.tree.selection()
+        if sel and sel[0].startswith("F"):
+            idx = int(sel[0][1:])
+            if idx < len(self.files) and self.files[idx] is not self.current:
+                self._select_index(idx)
+
+    def _on_tree_double(self, event) -> None:
+        if not self.merging() or self.tree.identify_region(event.x, event.y) != "cell":
+            return
+        if self.tree.identify_column(event.x) != "#3":
+            return
+        iid = self.tree.identify_row(event.y)
+        if iid:
+            self._edit_title(iid)
+
+    def _edit_title(self, iid: str) -> None:
+        """An entry over the title cell; Return keeps the text, Escape drops it."""
+        bbox = self.tree.bbox(iid, "title")
+        if not bbox or not iid.startswith("F"):
+            return
+        idx = int(iid[1:])
+        x, y, w, h = bbox
+        var = tk.StringVar(value=self.tree.set(iid, "title"))
+        ent = ttk.Entry(self.tree, textvariable=var)
+        ent.place(x=x, y=y, width=w, height=h)
+        ent.focus_set()
+        ent.select_range(0, "end")
+        done = []
+
+        def finish(keep: bool) -> None:
+            if done:
+                return
+            done.append(True)
+            ent.destroy()
+            if keep and idx < len(self.files):
+                self.set_chapter_title(idx, var.get())
+
+        ent.bind("<Return>", lambda e: finish(True))
+        ent.bind("<Escape>", lambda e: finish(False))
+        ent.bind("<FocusOut>", lambda e: finish(True))
+
+    # ------------------------------------------------------------ panel (continued)
     def _refresh_file_panel(self) -> None:
         st = self.current
         self._syncing = True
         try:
-            self.var_title.set(st.title if st else "")
+            self.var_title.set(self.book_title() if self.merging() else (st.title if st else ""))
             self.var_encoding.set(st.encoding if st else detect.AUTO)
             self._sync_encoding_combo()
         finally:
@@ -709,6 +854,11 @@ class App:
 
     def _refresh_tree(self) -> None:
         self.tree.delete(*self.tree.get_children())
+        if self.merging():
+            self._refresh_merge_tree()
+            return
+        self.tree.heading("line", text=t("col_line"))
+        self.lbl_pattern_err.configure(foreground="#c00")
         st = self.current
         if st is None or st.loaded is None:
             self.lbl_chapter_count.configure(text="")
@@ -727,6 +877,29 @@ class App:
             self.lbl_chapter_count.configure(text=t("chapter_none"))
         else:
             self.lbl_chapter_count.configure(text=t("chapter_count", count=count))
+
+    def _refresh_merge_tree(self) -> None:
+        """One row per loaded file, in file order: tick = in the book, title = chapter title."""
+        self.tree.heading("line", text=t("col_file"))
+        self.lbl_pattern_err.configure(text=t("merge_hint"), foreground="#555")
+        states = self._merge_states()
+        parts = self.merge_parts(states)
+        current_iid = ""
+        for n, (st, part) in enumerate(zip(states, parts), 1):
+            iid = f"F{self.files.index(st)}"
+            if st is self.current:
+                current_iid = iid
+            self.tree.insert("", "end", iid=iid,
+                             values=(CHECK if st.included else "", n, part.title, st.name, st.chars))
+        self.lbl_chapter_count.configure(
+            text=t("merge_count", count=sum(1 for s in states if s.included)) if states else "")
+        if current_iid:
+            self._syncing = True
+            try:
+                self.tree.selection_set(current_iid)
+                self.tree.see(current_iid)
+            finally:
+                self._syncing = False
 
     # ------------------------------------------------------------ chapter edits
     def _on_encoding(self, _event=None) -> None:
@@ -749,9 +922,14 @@ class App:
         self._refresh_tree()
 
     def _on_title_edit(self) -> None:
-        if self._syncing or self.current is None:
+        if self._syncing:
             return
-        self.current.title = self.var_title.get()
+        if self.merging():
+            self.merge_title_user = self.var_title.get()
+            self._refresh_tree()  # the chapter titles drop the book title from the file names
+            return
+        if self.current is not None:
+            self.current.title = self.var_title.get()
 
     def _on_tree_click(self, event) -> None:
         if self.tree.identify_region(event.x, event.y) != "cell":
@@ -768,6 +946,13 @@ class App:
             self._toggle(sel[0])
 
     def _toggle(self, iid: str) -> None:
+        if iid.startswith("F") and self.merging():
+            idx = int(iid[1:])
+            if idx < len(self.files):
+                self.files[idx].included = not self.files[idx].included
+                self._refresh_tree()
+                self.tree.selection_set(iid)
+            return
         st = self.current
         if st is None or not iid.startswith("L"):
             return
@@ -812,7 +997,7 @@ class App:
         sel = self.tree.selection()
         if st is None or st.loaded is None or not sel:
             return
-        start = int(sel[0][1:])
+        start = 0 if sel[0].startswith("F") else int(sel[0][1:])
         text = "\n".join(st.loaded.lines[start: start + 60])
         self.txt_preview.configure(state="normal")
         self.txt_preview.delete("1.0", "end")
@@ -844,6 +1029,9 @@ class App:
                 messagebox.showerror(t("dlg_error"), t("err_cover_open", name=os.path.basename(opts.cover_path)),
                                      parent=self.root)
                 return
+        if self.merging():
+            self._run_merge(opts)
+            return
         jobs: list[tuple[FileState, list[chap.Chapter]]] = []
         for st in ready:
             if st.pattern_applied != self._pattern_key():
@@ -886,6 +1074,60 @@ class App:
         self.worker = threading.Thread(target=work, daemon=True)
         self.worker.start()
 
+    def _run_merge(self, opts: Options) -> None:
+        """One EPUB from every ticked file, in list order. A file that could not be
+        read is left out with a line in the log."""
+        if any(f.loading for f in self.files):
+            messagebox.showinfo(t("app_title"), t("msg_still_loading"), parent=self.root)
+            return
+        states = self._merge_states()
+        for st in self.files:
+            if st not in states:
+                self.log("log_skipped", name=st.name)
+        parts = [p for st, p in zip(states, self.merge_parts(states)) if st.included]
+        if not parts:
+            messagebox.showinfo(t("app_title"), t("err_merge_none"), parent=self.root)
+            return
+        title = self.book_title().strip() or core.default_title(parts[0].path)
+        if len(parts) > core.MANY_FILES and not messagebox.askyesno(
+                t("dlg_confirm"), t("warn_many_chapters", name=title, count=len(parts)), parent=self.root):
+            return
+        self.cancel_event.clear()
+        self.outputs = []
+        n = len(parts)
+        self.progress.configure(maximum=n + 1, value=0)
+        self._set_controls(running=True)
+
+        def progress(phase: str, i: int, total: int, name: str) -> None:
+            self.root.after(0, lambda: self._on_merge_progress(phase, i, total, name))
+
+        def work() -> None:
+            try:
+                result = core.convert_many(parts, opts, title, progress=progress, cancel=self.cancel_event)
+            except core.Cancelled:
+                self.root.after(0, lambda: self.log("log_cancelled", name=title))
+                self.root.after(0, lambda: self._finished(True, 0, 0))
+                return
+            except Exception as exc:
+                self.root.after(0, lambda _e=exc: self.log("err_file_failed", name=title, error=str(_e)))
+                self.root.after(0, lambda: self._finished(False, 0, 0))
+                return
+            self.outputs.append(result.output_path)
+            self.root.after(0, lambda: self.log("log_merged", files=n, count=result.chapters))
+            self.root.after(0, lambda: self.log("log_saved", path=result.output_path))
+            self.root.after(0, lambda: self._finished(False, 1, result.replaced))
+
+        self.worker = threading.Thread(target=work, daemon=True)
+        self.worker.start()
+
+    def _on_merge_progress(self, phase: str, i: int, n: int, name: str) -> None:
+        if phase == "read":
+            self.progress.configure(value=i - 1)
+            self._set_status("status_reading", file=i, files=n, name=name)
+        else:
+            self.progress.configure(value=n)
+            self._set_status("status_writing")
+
     def _log_result(self, name: str, r: core.FileResult) -> None:
         if r.no_chapters:
             self.log("log_no_chapters", name=name)
@@ -916,9 +1158,10 @@ class App:
         self.btn_cancel.configure(state="disabled")
 
     def _set_controls(self, running: bool) -> None:
-        for w in (self.btn_run, self.btn_add, self.btn_remove, self.btn_clear, self.btn_redetect,
-                  self.btn_add_chapter, self.btn_toggle):
+        for w in (self.btn_run, self.btn_add, self.btn_remove, self.btn_clear, self.btn_toggle, self.btn_jump,
+                  self.rad_each, self.rad_one):
             w.configure(state="disabled" if running else "normal")
+        self._apply_mode(running)
         self.cmb_lang.configure(state="disabled" if running else "readonly")
         self.cmb_enc.configure(state="disabled" if running else "readonly")
         self.btn_cancel.configure(state="normal" if running else "disabled")

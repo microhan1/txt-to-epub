@@ -11,6 +11,7 @@ import datetime as _dt
 import os
 import re
 import threading
+import time
 import uuid
 import zipfile
 from dataclasses import dataclass, field
@@ -30,6 +31,7 @@ LANG_AUTO = "auto"
 
 MAX_TITLE_CHARS = 300
 TEXT_EXTS = (".txt",)
+MANY_FILES = 300              # "one book" from more files than this: ask first (one file = one chapter)
 
 
 class Cancelled(Exception):
@@ -49,6 +51,7 @@ class Options:
     cover_path: str = ""
     indent: bool = True
     line_height: str = ""
+    merge: bool = False                 # several files -> one EPUB, one chapter per file
 
     def validated(self) -> "Options":
         o = Options(**self.__dict__)
@@ -75,6 +78,7 @@ class Options:
         o.publisher = o.publisher.strip()[:MAX_TITLE_CHARS]
         o.split_chapters = bool(o.split_chapters)
         o.indent = bool(o.indent)
+        o.merge = bool(o.merge)
         return o
 
 
@@ -170,6 +174,24 @@ def output_path_for(input_path: str) -> str:
 
 
 _NUMBERED = re.compile(r"^(.*)\((\d+)\)\.epub$", re.DOTALL)
+
+
+_UNSAFE_NAME = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
+_MULTI_SPACE = re.compile(r" {2,}")
+
+
+_RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL"} | {f"{d}{n}" for d in ("COM", "LPT") for n in range(1, 10)}
+
+
+def safe_file_name(title: str, fallback: str = "book") -> str:
+    """A book title as a file name: characters Windows forbids become spaces,
+    trailing dots and spaces go (Windows drops them silently), and a device
+    name such as CON gets an underscore."""
+    name = _MULTI_SPACE.sub(" ", _UNSAFE_NAME.sub(" ", title)).strip().rstrip(". ")
+    name = name[:120].rstrip(". ")
+    if name.upper() in _RESERVED_NAMES:
+        name += "_"
+    return name or fallback
 
 
 def free_output_name(candidate: str) -> str:
@@ -302,6 +324,15 @@ def build_epub(output_path: str, title: str, author: str, language: str, section
     return written, play, sum(1 for name, _ in files if name.endswith(".xhtml") and name != "OEBPS/cover.xhtml")
 
 
+# Reserving the output name and moving the finished file onto it happen under one
+# lock. Without it two conversions into the same folder raced: while one thread
+# did os.replace() onto the name it had just reserved, the other thread's
+# os.path.lexists() held a handle on that very file for a moment, and Windows
+# refused the replace (WinError 5). That was the flaky
+# test_two_conversions_of_the_same_file_at_once_produce_two_files.
+_output_lock = threading.Lock()
+
+
 def _reserve_output(output_path: str) -> str:
     """Create the first free <name>.epub / <name>(n).epub exclusively and return it."""
     candidate = output_path
@@ -330,15 +361,16 @@ def _write_zip(output_path: str, files: list[tuple[str, bytes]]) -> str:
                 z.writestr(name, data, compress_type=zipfile.ZIP_DEFLATED)
         # Another run may have taken the name while this one was building:
         # claim the first free name atomically, then move the result onto it.
-        final = _reserve_output(output_path)
-        try:
-            os.replace(tmp, final)
-        except BaseException:
+        with _output_lock:
+            final = _reserve_output(output_path)
             try:
-                os.remove(final)
-            except OSError:
-                pass
-            raise
+                _replace_retry(tmp, final)
+            except BaseException:
+                try:
+                    os.remove(final)
+                except OSError:
+                    pass
+                raise
         return final
     except BaseException:
         try:
@@ -346,6 +378,20 @@ def _write_zip(output_path: str, files: list[tuple[str, bytes]]) -> str:
         except OSError:
             pass
         raise
+
+
+def _replace_retry(src: str, dst: str, attempts: int = 10) -> None:
+    """os.replace that rides out a momentary sharing violation on Windows: another
+    process (an antivirus scanner, a second copy of this tool) may hold the
+    just-created placeholder open for a few milliseconds."""
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.05)
 
 
 # --- one file, end to end ---------------------------------------------------
@@ -398,3 +444,175 @@ def convert_file(path: str, opts: Options, title: str = "", progress=None,
     """CLI convenience: load, detect chapters, build."""
     loaded = load_text(path, opts.validated().encoding)
     return convert(loaded, opts, title, None, progress, cancel)
+
+
+# --- several files, one book ------------------------------------------------
+
+_SEP_CHARS = " -_."
+_SEP_RX = re.compile(r"[ \-_.]+")
+_DIGITS = "0123456789"
+
+
+def _natural(s: str) -> tuple:
+    """'2' < '10': digit runs compare as numbers, the rest case-insensitively."""
+    return tuple((0, int(p)) if p.isdigit() else (1, p.casefold()) for p in re.split(r"(\d+)", s.strip()))
+
+
+def natural_key(path: str):
+    """Sort key for episode files: folder first, then the name in number order."""
+    folder, name = os.path.split(path)
+    return _natural(os.path.normcase(folder)), _natural(name), name
+
+
+def sort_natural(paths: list[str]) -> list[str]:
+    return sorted(paths, key=natural_key)
+
+
+def common_title_prefix(stems: list[str]) -> str:
+    """What several file names share before their episode number: 'Book' from
+    'Book_001_Awake' and 'Book_002_Dungeon'. Empty when there are fewer than
+    two names or the shared part is under two characters."""
+    if len(stems) < 2:
+        return ""
+    prefix = os.path.commonprefix(stems)
+    rest = next((s[len(prefix):] for s in stems if len(s) > len(prefix)), "")
+    if rest and rest[0] not in _SEP_CHARS and not rest[0].isdigit() and prefix and prefix[-1] not in _SEP_CHARS:
+        # the shared part stops inside a word ('abc-de' of 'abc-def'): back up to the separator
+        cut = max(prefix.rfind(c) for c in _SEP_CHARS)
+        prefix = prefix[:cut] if cut > 0 else ""
+    prefix = prefix.rstrip(_DIGITS).rstrip(_SEP_CHARS)
+    return prefix if len(prefix.strip()) >= 2 else ""
+
+
+def book_title_for(inputs: list[str], files: list[str]) -> str:
+    """Default title of the merged book: the folder's name when one folder was
+    given, else what the file names share, else the first file's name."""
+    if len(inputs) == 1 and os.path.isdir(inputs[0]):
+        name = os.path.basename(os.path.normpath(os.path.abspath(inputs[0]))).strip()
+        if name:
+            return name[:MAX_TITLE_CHARS]
+    stems = [default_title(f) for f in files]
+    shared = common_title_prefix(stems)
+    if shared:
+        return shared[:MAX_TITLE_CHARS]
+    return stems[0][:MAX_TITLE_CHARS] if stems else ""
+
+
+def _title_core(s: str) -> str:
+    """Compare titles ignoring spaces and separators: '001 a' == '001_a'."""
+    return _SEP_RX.sub("", s).casefold()
+
+
+def chapter_title_for(path: str, book_title: str, lines: list[str], fallback: str) -> tuple[str, int]:
+    """Chapter title of one episode file, and the line its body starts at.
+
+    The file name without extension loses the book title and the separators
+    around it ('Book_001_Awake' -> '001 Awake'); nothing left -> *fallback*.
+    When the file's first non-blank line is a heading (it equals that title
+    ignoring separators, or it matches the default chapter pattern) and is at
+    most MAX_HEADING_CHARS long, that line becomes the title and the body
+    starts after it, so the heading is not printed twice. A first line that
+    repeats the whole file name (series name included) is dropped the same
+    way, with the short title kept. Otherwise the body is the whole file."""
+    stem = default_title(path)
+    book = book_title.strip()
+    title = stem[len(book):] if book and stem.casefold().startswith(book.casefold()) else stem
+    title = _MULTI_SPACE.sub(" ", title.replace("_", " ")).strip(_SEP_CHARS) or fallback
+    first = next((i for i, line in enumerate(lines) if line.strip()), None)
+    if first is not None:
+        line = lines[first].strip()
+        if len(line) <= chap.MAX_HEADING_CHARS:
+            if _title_core(line) == _title_core(title) or chap.is_heading(line, _default_rx()):
+                return line, first + 1
+            if _title_core(line) == _title_core(stem):
+                # the line repeats the whole file name, series name included: same heading, keep the short title
+                return title, first + 1
+    return title, 0
+
+
+_default_rx_cache: list[re.Pattern] = []
+
+
+def _default_rx() -> re.Pattern:
+    if not _default_rx_cache:
+        _default_rx_cache.append(chap.compile_pattern(chap.DEFAULT_PATTERN))
+    return _default_rx_cache[0]
+
+
+@dataclass
+class Part:
+    """One episode file as one chapter of the merged book."""
+    loaded: Loaded
+    title: str
+    body_start: int = 0     # lines before this are the heading already used as the title
+
+    @property
+    def path(self) -> str:
+        return self.loaded.path
+
+
+def merge_parts(loadeds: list[Loaded], book_title: str, fallback=None) -> list[Part]:
+    """Chapters for the files in the given order. The chapter titles drop what
+    the file names share (the series name), or the book title when the names
+    share nothing. *fallback(n)* names a chapter whose file name has nothing
+    left (default: 'n')."""
+    prefix = common_title_prefix([default_title(l.path) for l in loadeds]) or book_title
+    parts: list[Part] = []
+    for n, loaded in enumerate(loadeds, 1):
+        default = fallback(n) if fallback else str(n)
+        title, start = chapter_title_for(loaded.path, prefix, loaded.lines, default)
+        parts.append(Part(loaded, title, start))
+    return parts
+
+
+def merge_output_path(first_path: str, title: str) -> str:
+    """<title>.epub in the first file's folder; (2), (3)... when the name is taken."""
+    return free_output_name(os.path.join(os.path.dirname(first_path), safe_file_name(title) + ".epub"))
+
+
+def convert_many(parts: list[Part], opts: Options, title: str, output_path: str | None = None,
+                 progress=None, cancel: threading.Event | None = None) -> FileResult:
+    """One EPUB from several loaded files: each part is one chapter, in list order.
+
+    Paragraph mode 'auto' is decided per file (episodes differ in how they use
+    blank lines); text language 'auto' once for the whole book.
+    *progress(phase, i, n, name)* is called with phase "read" for every part
+    and "write" once for the EPUB itself. Raises Cancelled, OSError.
+    """
+    if not parts:
+        raise ValueError("no parts")
+    opts = opts.validated()
+    title = (title or default_title(parts[0].path)).strip()[:MAX_TITLE_CHARS]
+    sections: list[Section] = []
+    n = len(parts)
+    for i, part in enumerate(parts, 1):
+        if cancel is not None and cancel.is_set():
+            raise Cancelled()
+        if progress:
+            progress("read", i, n, os.path.basename(part.path))
+        lines = part.loaded.lines
+        mode = chap.choose_paragraph_mode(lines, opts.paragraph_mode)
+        paras = chap.paragraphs_of(lines[part.body_start:], mode)
+        sections.append(Section(part.title.strip() or title, paras, heading=True))
+    if opts.text_lang != LANG_AUTO:
+        lang = opts.text_lang
+    else:
+        # the sampler reads the first 20000 characters, so a slice of every file beats the whole of the first
+        lang = guess_text_lang("\n".join(p.loaded.text[:2000] for p in parts))
+
+    cover_img = None
+    cover_small = False
+    if opts.cover_mode == "file" and opts.cover_path:
+        cover_img = cover_mod.load_cover(opts.cover_path)
+        cover_small = cover_img.too_small
+    elif opts.cover_mode == "auto":
+        cover_img = cover_mod.make_cover(title, opts.author, lang)
+
+    if progress:
+        progress("write", n, n, "")
+    out = output_path or merge_output_path(parts[0].path, title)
+    out, nav, nfiles = build_epub(out, title, opts.author, lang, sections, publisher=opts.publisher,
+                                  cover=cover_img, indent=opts.indent, line_height=opts.line_height,
+                                  cancel=cancel)
+    replaced = sum(p.loaded.replaced for p in parts)
+    return FileResult(out, len(sections), nfiles, replaced, False, cover_small, lang, nav)

@@ -2,7 +2,7 @@
 
 [한국어](README.md) · [中文](README.zh-CN.md) · [日本語](README.ja.md)
 
-Turns a plain-text novel (.txt) into an EPUB you can read on a Ridipaper, Crema or Kindle. The encoding (EUC-KR, CP949, UTF-8, UTF-16) is detected automatically and chapters are split automatically. No server (except the update check, which can be turned off), no install, the original file is never touched.
+Turns a plain-text novel (.txt) into an EPUB you can read on a Ridipaper, Crema or Kindle. The encoding (EUC-KR, CP949, UTF-8, UTF-16) is detected automatically and chapters are split automatically. Several TXT files, one per episode, can also become one book. No server (except the update check, which can be turned off), no install, the original file is never touched.
 
 ![Before and after](docs/before_after.png)
 
@@ -30,6 +30,25 @@ python main.py novel.txt --encoding auto --chapter-pattern "^Chapter \d+" --titl
 
 `python main.py --help` shows the options in your OS language (한국어 · English · 中文 · 日本語). `--lang` is the language of the text (the EPUB's `dc:language`); the interface language is `--ui-lang`.
 
+## Several TXT files as one book
+
+A web-novel folder with one file per episode becomes one book. Drop the folder (or several files), choose **One book** under the file list, and you get a single EPUB with one chapter per file. **One EPUB per file** (the default) works as before.
+
+- **Order**: numbers in file names are read as numbers, so `2.txt` comes before `10.txt`. ▲ ▼ (or Alt+↑/↓) moves a file.
+- **Chapter titles**: the file name minus what all the names share (the series name): `Book_001_Awakening.txt` → `001 Awakening`. When a file's first line is that title or looks like a heading (`Chapter 1`), that line becomes the title and is not printed twice. Double-click a title in step 2 to change it; untick a file to leave it out.
+- **Book title**: the folder's name when you dropped one folder, else what the file names share. The result is `<title>.epub` in the first file's folder.
+- The encoding is detected per file (EUC-KR and UTF-8 episodes can be mixed). The chapter pattern is not applied inside the files in this mode: one file is one chapter.
+
+![One book](docs/one_book.png)
+
+*Figure: ten episode files with **One book** chosen; step 2 lists the files as chapters, in order. Korean UI.*
+
+On the command line it is `--merge`. Without `--output` the book is written as `<title>.epub` beside the first file.
+
+```bash
+python main.py novel_folder --merge --title "Title" --author "Author" --output "Title.epub"
+```
+
 ## Chapter pattern examples
 
 A line is a chapter heading when, with surrounding whitespace removed, it **starts** with the pattern and is at most 80 characters long. So `제1장 떠나며` is caught even with a subtitle after the number, but a body sentence that begins with `Prologue` or `1. ` can be taken for a chapter too; untick it in the list and it joins the previous chapter's text. The default pattern catches all of these, and you can type your own regular expression. The patterns live in `patterns.json`.
@@ -55,7 +74,6 @@ If a newer version exists, a one-line notice appears at the bottom of the window
 
 - No EPUB3, MOBI or AZW3. EPUB2 only.
 - No spell checking or text editing.
-- No merging of several TXT files into one EPUB.
 - Documents with images (HTML, DOCX) are out of scope.
 - No DRM removal and no web-novel scraping.
 - It never downloads or installs a new version by itself.
