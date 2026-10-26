@@ -70,6 +70,14 @@ python main.py 소설폴더 --merge --title "제목" --author "저자" --output 
 
 *그림: 알림 줄 화면. 서버 응답을 가짜(새 버전 0.2.0)로 넣어 띄운 시험 화면입니다.*
 
+## 의견 보내기
+
+안 되는 것·불편한 것·바라는 기능은 프로그램 위쪽의 **의견 보내기** 또는 [https://chaekgalpi.co.kr/tools/txttoepub#feedback](https://chaekgalpi.co.kr/tools/txttoepub#feedback)에서 로그인 없이 보낼 수 있습니다. 프로그램은 브라우저로 그 페이지를 열기만 하고 아무것도 보내지 않습니다. [GitHub Issues](https://github.com/microhan1/txt-to-epub/issues)도 그대로 받습니다.
+
+![의견 보내기 링크](docs/feedback_link.png)
+
+*그림: 창 위쪽 오른편의 「의견 보내기」 링크.*
+
 ## 하지 않는 것
 
 - EPUB3, MOBI, AZW3는 만들지 않습니다. EPUB2 하나만.

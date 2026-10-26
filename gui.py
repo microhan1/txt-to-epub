@@ -14,6 +14,7 @@ import threading
 import tkinter as tk
 from dataclasses import dataclass, field
 from tkinter import filedialog, messagebox, ttk
+from tkinter import font as tkfont
 
 import webbrowser
 
@@ -37,6 +38,7 @@ except Exception:  # pragma: no cover - optional dependency
 PREVIEW_CHARS = 3000
 CHECK = chr(0x2714)
 UPDATE_BG, UPDATE_BORDER = "#fff6d6", "#d9b84a"  # the new-version line: a soft, non-modal band
+LINK_FG = "#0645ad"
 LARGE_MB = detect.WARN_SIZE / (1024 * 1024)
 
 
@@ -176,13 +178,21 @@ class App:
         head.grid(row=0, column=0, sticky="ew")
         head.columnconfigure(0, weight=1)
         self._reg(ttk.Label(head, font=("", 15, "bold")), "app_title").grid(row=0, column=0, sticky="w")
+        # a small link: opens the feedback box on the tool's page in the browser, nothing more
+        link_font = tkfont.nametofont("TkDefaultFont").copy()
+        link_font.configure(underline=True)
+        self.lnk_feedback = self._reg(ttk.Label(head, foreground=LINK_FG, cursor="hand2", font=link_font,
+                                                takefocus=True), "btn_feedback")
+        self.lnk_feedback.grid(row=0, column=1, padx=(0, 16))
+        for seq in ("<Button-1>", "<Return>", "<space>"):
+            self.lnk_feedback.bind(seq, lambda e: self.send_feedback())
         self.chk_update = self._reg(ttk.Checkbutton(head, variable=self.var_update_check,
                                                     command=self._on_update_toggle), "opt_update_check")
-        self.chk_update.grid(row=0, column=1, padx=(0, 16))
-        self._reg(ttk.Label(head), "lbl_language").grid(row=0, column=2, padx=(0, 6))
+        self.chk_update.grid(row=0, column=2, padx=(0, 16))
+        self._reg(ttk.Label(head), "lbl_language").grid(row=0, column=3, padx=(0, 6))
         self.cmb_lang = ttk.Combobox(head, state="readonly", width=10, textvariable=self.var_lang,
                                      values=[i18n.LANG_NAMES[c] for c in i18n.LANGS])
-        self.cmb_lang.grid(row=0, column=3)
+        self.cmb_lang.grid(row=0, column=4)
         self.cmb_lang.bind("<<ComboboxSelected>>", self._on_lang)
 
         # ---- files
@@ -524,6 +534,19 @@ class App:
         self._save_options()
         if not self.var_update_check.get():
             self._hide_update_notice()
+
+    # ------------------------------------------------------------ feedback
+    def send_feedback(self) -> None:
+        """Open the feedback box on the tool's page. Nothing is sent from here. When
+        no browser opens, the address goes to the log and a message box, to copy."""
+        url = update_check.feedback_url(version.UPDATE_SLUG, version.APP_VERSION, i18n.current_lang())
+        try:
+            opened = webbrowser.open(url)
+        except Exception:  # webbrowser.Error, OSError: the window must stay up
+            opened = False
+        if not opened:
+            self.log("feedback_failed_log", url=url)
+            messagebox.showwarning(t("btn_feedback"), t("feedback_failed", url=url), parent=self.root)
 
     # ------------------------------------------------------------ files
     def _on_drop(self, event) -> None:

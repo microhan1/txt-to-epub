@@ -137,5 +137,8 @@
   "opt_update_check": "新しいバージョンを確認",
   "update_available": "新しいバージョン {latest} があります（現在 {current}）",
   "btn_update": "更新",
-  "btn_later": "後で"
+  "btn_later": "後で",
+  "btn_feedback": "ご意見を送る",
+  "feedback_failed": "ブラウザを開けませんでした。下のアドレスをコピーしてブラウザのアドレス欄に貼り付けてください（Ctrl+C でこの画面の文字をコピーできます）。\n\n{url}",
+  "feedback_failed_log": "ブラウザを開けませんでした。ご意見ページ: {url}"
 }

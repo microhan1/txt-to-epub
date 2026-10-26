@@ -137,5 +137,8 @@
   "opt_update_check": "检查新版本",
   "update_available": "有新版本 {latest}（当前 {current}）",
   "btn_update": "更新",
-  "btn_later": "以后"
+  "btn_later": "以后",
+  "btn_feedback": "发送反馈",
+  "feedback_failed": "无法打开浏览器。请复制下面的地址并粘贴到浏览器地址栏（按 Ctrl+C 可复制此窗口中的文字）。\n\n{url}",
+  "feedback_failed_log": "无法打开浏览器。反馈页面：{url}"
 }

@@ -70,6 +70,14 @@ python main.py 小说文件夹 --merge --title "书名" --author "作者" --outp
 
 *图：提示行画面。用伪造的服务器响应（新版本 0.2.0）显示的测试画面，界面为韩语。*
 
+## 发送反馈
+
+问题、不便之处或想要的功能，可以通过窗口上方的 **发送反馈** 或 [https://chaekgalpi.co.kr/en/tools/txttoepub#feedback](https://chaekgalpi.co.kr/en/tools/txttoepub#feedback)（英文页面）提交，无需登录。程序只是用浏览器打开该页面，自己不发送任何内容。[GitHub Issues](https://github.com/microhan1/txt-to-epub/issues) 也照常接收。
+
+![发送反馈链接](docs/feedback_link.png)
+
+*图：窗口右上方的「의견 보내기」（发送反馈）链接，界面为韩语。*
+
 ## 不做的事
 
 - 不生成 EPUB3、MOBI、AZW3，只生成 EPUB2。

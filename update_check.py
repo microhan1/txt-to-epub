@@ -23,6 +23,10 @@ TIMEOUT = 4.0
 DELAY_MS = 1500
 POLL_MS = 100                       # how often the Tk thread looks for the answer
 MAX_BYTES = 64 * 1024
+# "Send feedback" only opens this page in the browser; nothing is sent from the program.
+# There is no Japanese or Chinese page: those UIs get the English one.
+FEEDBACK_PAGE = {"ko": "https://chaekgalpi.co.kr/tools/{slug}", "en": "https://chaekgalpi.co.kr/en/tools/{slug}"}
+FEEDBACK_EN_LANGS = ("en", "ja", "zh-cn")
 
 
 @dataclasses.dataclass
@@ -40,6 +44,18 @@ def page_url(info: UpdateInfo, ui_lang: str) -> str:
     if ui_lang != "ko" and info.url_en:
         return info.url_en
     return info.url
+
+
+def feedback_url(slug: str, version: str | None, lang: str | None) -> str:
+    """The feedback box on the tool's page. Built from constants only. The English
+    page for en/ja/zh-CN (any case), the Korean page for ko and anything unknown.
+    `utm_source=app` is how the site tells the program from a web visitor; the
+    version is percent-encoded and left out when empty; `#feedback` scrolls to the box."""
+    page = "en" if str(lang or "").strip().replace("_", "-").lower() in FEEDBACK_EN_LANGS else "ko"
+    query = "utm_source=app&utm_medium=feedback"
+    if version and str(version).strip():
+        query += "&v=" + urllib.parse.quote(str(version), safe="")
+    return f"{FEEDBACK_PAGE[page].format(slug=slug)}?{query}#feedback"
 
 
 def today() -> str:

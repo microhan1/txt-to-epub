@@ -70,6 +70,14 @@ If a newer version exists, a one-line notice appears at the bottom of the window
 
 *Figure: the notice line, shown with a faked server reply (new version 0.2.0) in a test run. Korean UI.*
 
+## Send feedback
+
+Tell us what's broken, awkward or missing with **Send feedback** at the top of the window, or at [https://chaekgalpi.co.kr/en/tools/txttoepub#feedback](https://chaekgalpi.co.kr/en/tools/txttoepub#feedback), no sign-in needed. The program only opens that page in your browser and sends nothing itself. [GitHub Issues](https://github.com/microhan1/txt-to-epub/issues) are welcome as before.
+
+![Send feedback link](docs/feedback_link.png)
+
+*Figure: the 「의견 보내기」 (Send feedback) link at the top right of the window. Korean UI.*
+
 ## What it does not do
 
 - No EPUB3, MOBI or AZW3. EPUB2 only.

@@ -137,5 +137,8 @@
   "opt_update_check": "새 버전 확인",
   "update_available": "새 버전이 나왔습니다: {latest} (현재 {current})",
   "btn_update": "업데이트",
-  "btn_later": "다음에"
+  "btn_later": "다음에",
+  "btn_feedback": "의견 보내기",
+  "feedback_failed": "브라우저를 열지 못했습니다. 아래 주소를 복사해 브라우저 주소창에 붙여 넣어 주세요(Ctrl+C 로 이 창의 글자를 복사할 수 있습니다).\n\n{url}",
+  "feedback_failed_log": "브라우저를 열지 못했습니다. 의견 보내기 주소: {url}"
 }

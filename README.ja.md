@@ -70,6 +70,14 @@ python main.py 小説フォルダ --merge --title "タイトル" --author "著�
 
 *図: 通知行の画面。サーバー応答を偽物（新しいバージョン 0.2.0）にして表示したテスト画面です（韓国語 UI）。*
 
+## ご意見を送る
+
+不具合・使いにくい点・ほしい機能は、画面上部の **ご意見を送る** または [https://chaekgalpi.co.kr/en/tools/txttoepub#feedback](https://chaekgalpi.co.kr/en/tools/txttoepub#feedback)（英語ページ）から、ログインなしで送れます。プログラムはそのページをブラウザで開くだけで、自分では何も送りません。[GitHub Issues](https://github.com/microhan1/txt-to-epub/issues) もこれまでどおり受け付けます。
+
+![ご意見を送るリンク](docs/feedback_link.png)
+
+*図: ウィンドウ右上の「의견 보내기」（ご意見を送る）リンク（韓国語 UI）。*
+
 ## しないこと
 
 - EPUB3・MOBI・AZW3 は作りません。EPUB2 のみ。

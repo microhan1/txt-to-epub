@@ -137,5 +137,8 @@
   "opt_update_check": "Check for updates",
   "update_available": "Version {latest} is available (current {current})",
   "btn_update": "Update",
-  "btn_later": "Later"
+  "btn_later": "Later",
+  "btn_feedback": "Send feedback",
+  "feedback_failed": "Could not open a browser. Copy the address below and paste it into your browser (Ctrl+C copies the text of this box).\n\n{url}",
+  "feedback_failed_log": "Could not open a browser. Feedback page: {url}"
 }
