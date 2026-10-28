@@ -156,6 +156,14 @@ def test_readme_feedback_links(name, expected):
         assert text[m.end()] in "])", text[m.start() - 5:m.end() + 5]
 
 
+@pytest.mark.parametrize("name, page", [("README.md", KO_PAGE), ("README.en.md", EN_PAGE), ("README.ja.md", EN_PAGE), ("README.zh-CN.md", EN_PAGE)])
+def test_readme_tools_page_link(name, page):
+    """The tools-page link (utm_source=github): Korean README -> Korean page, the others -> English page, query kept."""
+    with open(os.path.join(ROOT, name), encoding="utf-8") as f:
+        links = re.findall(r"\]\((https://chaekgalpi\.co\.kr/[^\s)]*utm_source=github[^\s)]*)\)", f.read())
+    assert links == [page + "?utm_source=github&utm_medium=referral&utm_campaign=tool_cta&utm_content=txttoepub"], links
+
+
 # ---------------------------------------------------------------- the window
 @pytest.fixture
 def app(tmp_path, monkeypatch):
