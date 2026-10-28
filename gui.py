@@ -39,6 +39,7 @@ PREVIEW_CHARS = 3000
 CHECK = chr(0x2714)
 UPDATE_BG, UPDATE_BORDER = "#fff6d6", "#d9b84a"  # the new-version line: a soft, non-modal band
 LINK_FG = "#0645ad"
+TIP_BG = "#ffffe1"  # the small note under the feedback link
 LARGE_MB = detect.WARN_SIZE / (1024 * 1024)
 
 
@@ -111,6 +112,81 @@ class FileState:
         return chap.build_chapters(self.loaded.lines, starts, self.title, self.manual)
 
 
+class Tooltip:
+    """A small note under a widget while the mouse is over it; tkinter only. The text
+    is looked up on every show, so it follows the language switch."""
+
+    DELAY_MS = 450
+    WRAP = 320
+
+    def __init__(self, widget: tk.Misc, key: str) -> None:
+        self.widget, self.key = widget, key
+        self.tip: tk.Toplevel | None = None
+        self.label: tk.Label | None = None
+        self._job: str | None = None
+        widget.bind("<Enter>", lambda e: self._schedule(), add="+")
+        for seq in ("<Leave>", "<ButtonPress>", "<Destroy>"):
+            widget.bind(seq, lambda e: self.hide(), add="+")
+
+    @property
+    def text(self) -> str:
+        return t(self.key)
+
+    def _schedule(self) -> None:
+        self._cancel()
+        self._job = self.widget.after(self.DELAY_MS, self.show)
+
+    def _cancel(self) -> None:
+        if self._job is not None:
+            try:
+                self.widget.after_cancel(self._job)
+            except tk.TclError:
+                pass
+            self._job = None
+
+    def show(self) -> None:
+        self._job = None
+        if self.tip is None:
+            self.tip = tk.Toplevel(self.widget)
+            self.tip.wm_overrideredirect(True)
+            self.tip.wm_attributes("-topmost", True)
+            self.label = tk.Label(self.tip, justify="left", background=TIP_BG, relief="solid", borderwidth=1,
+                                  highlightthickness=0, padx=6, pady=3, wraplength=self.WRAP)
+            self.label.pack()
+        self.label.configure(text=self.text)
+        self.place()
+
+    def place(self) -> None:
+        """Right edge under the widget's right edge, then pulled inside the window and
+        the screen, so a narrow window or a link near the edge never cuts the note."""
+        w, tip = self.widget, self.tip
+        tip.update_idletasks()
+        tw, th = tip.winfo_reqwidth(), tip.winfo_reqheight()
+        x, y = w.winfo_rootx() + w.winfo_width() - tw, w.winfo_rooty() + w.winfo_height() + 4
+        top = w.winfo_toplevel()
+        left, right = top.winfo_rootx(), top.winfo_rootx() + top.winfo_width()
+        if tw <= right - left:
+            x = min(max(x, left), right - tw)
+        x = min(max(x, 0), w.winfo_screenwidth() - tw)
+        y = min(max(y, 0), w.winfo_screenheight() - th)
+        tip.wm_geometry(f"+{x}+{y}")
+
+    def refresh(self) -> None:
+        """After a language switch: new words in the note that is showing."""
+        if self.tip is not None and self.label is not None:
+            self.label.configure(text=self.text)
+            self.place()
+
+    def hide(self) -> None:
+        self._cancel()
+        if self.tip is not None:
+            try:
+                self.tip.destroy()
+            except tk.TclError:
+                pass
+            self.tip = self.label = None
+
+
 class App:
     def __init__(self, initial_files: list[str] | None = None) -> None:
         self.root = TkinterDnD.Tk() if _HAS_DND else tk.Tk()
@@ -178,14 +254,21 @@ class App:
         head.grid(row=0, column=0, sticky="ew")
         head.columnconfigure(0, weight=1)
         self._reg(ttk.Label(head, font=("", 15, "bold")), "app_title").grid(row=0, column=0, sticky="w")
-        # a small link: opens the feedback box on the tool's page in the browser, nothing more
+        # a small link: opens the feedback box on the tool's page in the browser, nothing more.
+        # A Tab stop before the checkbox: Enter or Space opens it, and a frame drawn while it
+        # has focus shows where the focus is (the border is always there, flat when
+        # unfocused, so the header does not shift).
         link_font = tkfont.nametofont("TkDefaultFont").copy()
         link_font.configure(underline=True)
         self.lnk_feedback = self._reg(ttk.Label(head, foreground=LINK_FG, cursor="hand2", font=link_font,
-                                                takefocus=True), "btn_feedback")
+                                                takefocus=True, borderwidth=1, relief="flat", padding=(2, 0)),
+                                      "btn_feedback")
         self.lnk_feedback.grid(row=0, column=1, padx=(0, 16))
-        for seq in ("<Button-1>", "<Return>", "<space>"):
-            self.lnk_feedback.bind(seq, lambda e: self.send_feedback())
+        for seq in ("<Button-1>", "<Return>", "<KP_Enter>", "<space>"):
+            self.lnk_feedback.bind(seq, lambda e: (self.send_feedback(), "break")[1])
+        self.lnk_feedback.bind("<FocusIn>", lambda e: self.lnk_feedback.configure(relief="solid"))
+        self.lnk_feedback.bind("<FocusOut>", lambda e: self.lnk_feedback.configure(relief="flat"))
+        self.tip_feedback = Tooltip(self.lnk_feedback, "tip_feedback")
         self.chk_update = self._reg(ttk.Checkbutton(head, variable=self.var_update_check,
                                                     command=self._on_update_toggle), "opt_update_check")
         self.chk_update.grid(row=0, column=2, padx=(0, 16))
@@ -428,6 +511,7 @@ class App:
             self._set_status(self._status_key, **self._status_kwargs)
         if self._update_info is not None:
             self._show_update_notice()
+        self.tip_feedback.refresh()
 
     def _set_status(self, key: str, **kwargs) -> None:
         self._status_key, self._status_kwargs = key, kwargs
@@ -539,7 +623,8 @@ class App:
     def send_feedback(self) -> None:
         """Open the feedback box on the tool's page. Nothing is sent from here. When
         no browser opens, the address goes to the log and a message box, to copy."""
-        url = update_check.feedback_url(version.UPDATE_SLUG, version.APP_VERSION, i18n.current_lang())
+        self.tip_feedback.hide()  # the note would otherwise linger over the browser
+        url =update_check.feedback_url(version.UPDATE_SLUG, version.APP_VERSION, i18n.current_lang())
         try:
             opened = webbrowser.open(url)
         except Exception:  # webbrowser.Error, OSError: the window must stay up

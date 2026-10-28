@@ -67,8 +67,9 @@ def test_exact_address_per_ui_language(lang, expected):
 
 
 @pytest.mark.parametrize("lang", [None, "", "  ", "fr", "de", "zh-TW", "zh", "kr", "korean", "english", 5])
-def test_unknown_language_gets_the_korean_page(lang):
-    assert uc.feedback_url(SLUG, "0.2.1", lang) == KO.format(v="0.2.1")
+def test_unknown_language_gets_the_english_page(lang):
+    """Series rule of 2026-10-27: only ko... is Korean; no language means the default (en)."""
+    assert uc.feedback_url(SLUG, "0.2.1", lang) == EN.format(v="0.2.1")
 
 
 @pytest.mark.parametrize("lang, expected", [("EN", EN), ("En", EN), ("JA", EN), ("zh-cn", EN), ("ZH-CN", EN),

@@ -17,6 +17,8 @@ import urllib.parse
 import urllib.request
 from typing import Callable
 
+import i18n
+
 API = "https://chaekgalpi.co.kr/api/tools/{slug}/latest"
 SITE = "https://chaekgalpi.co.kr/"  # the notice only ever opens a page on this site
 TIMEOUT = 4.0
@@ -24,9 +26,8 @@ DELAY_MS = 1500
 POLL_MS = 100                       # how often the Tk thread looks for the answer
 MAX_BYTES = 64 * 1024
 # "Send feedback" only opens this page in the browser; nothing is sent from the program.
-# There is no Japanese or Chinese page: those UIs get the English one.
+# There is no Japanese or Chinese page: those UIs get the English one (see is_korean).
 FEEDBACK_PAGE = {"ko": "https://chaekgalpi.co.kr/tools/{slug}", "en": "https://chaekgalpi.co.kr/en/tools/{slug}"}
-FEEDBACK_EN_LANGS = ("en", "ja", "zh-cn")
 
 
 @dataclasses.dataclass
@@ -37,21 +38,31 @@ class UpdateInfo:
     url_en: str = ""  # the English tools page, when the server offers one (`urlEn`)
 
 
-def page_url(info: UpdateInfo, ui_lang: str) -> str:
+def is_korean(lang) -> bool:
+    """Which page a screen language gets, the same rule across the series: codes whose
+    first part is "ko" (ko, ko-KR, ko_KR, KO) get the Korean page, every other code -
+    en, ja, zh, zh-CN, zh-TW, fr, anything unknown - the English one (there is no
+    Japanese or Chinese page). None, an empty value or a non-string means this tool's
+    default screen language (i18n.DEFAULT_LANG)."""
+    code = (lang.strip() if isinstance(lang, str) else "") or i18n.DEFAULT_LANG
+    return code.replace("_", "-").split("-", 1)[0].lower() == "ko"
+
+
+def page_url(info: UpdateInfo, ui_lang: str | None) -> str:
     """Which page [Update] opens: the Korean page for a Korean UI, the English
-    page for every other UI language when the server gave one. Decided at click
-    time, so switching the language after the notice appeared still counts."""
-    if ui_lang != "ko" and info.url_en:
+    page for every other UI language when the server gave one (is_korean). Decided
+    at click time, so switching the language after the notice appeared still counts."""
+    if not is_korean(ui_lang) and info.url_en:
         return info.url_en
     return info.url
 
 
 def feedback_url(slug: str, version: str | None, lang: str | None) -> str:
-    """The feedback box on the tool's page. Built from constants only. The English
-    page for en/ja/zh-CN (any case), the Korean page for ko and anything unknown.
-    `utm_source=app` is how the site tells the program from a web visitor; the
-    version is percent-encoded and left out when empty; `#feedback` scrolls to the box."""
-    page = "en" if str(lang or "").strip().replace("_", "-").lower() in FEEDBACK_EN_LANGS else "ko"
+    """The feedback box on the tool's page. Built from constants only; the language
+    picks the page as in is_korean(). `utm_source=app` is how the site tells the
+    program from a web visitor; the version is percent-encoded and left out when
+    empty; `#feedback` scrolls to the box."""
+    page = "ko" if is_korean(lang) else "en"
     query = "utm_source=app&utm_medium=feedback"
     if version and str(version).strip():
         query += "&v=" + urllib.parse.quote(str(version), safe="")
