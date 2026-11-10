@@ -20,6 +20,7 @@ import chapters as chap
 import detect
 import epub_build as core
 import i18n
+import splash
 from i18n import t
 
 
@@ -257,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
 
         gui.launch(args.inputs or None)
         return 0
+    splash.close_splash()  # the exe's start-up picture, if a console run got this far
     return run_cli(args)
 
 

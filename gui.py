@@ -19,10 +19,12 @@ from tkinter import font as tkfont
 import webbrowser
 
 import chapters as chap
+import cover as cover_mod
 import detect
 import epub_build as core
 import i18n
 import prefs as prefs_mod
+import splash
 import update_check
 import version
 from epub_build import Options
@@ -1128,8 +1130,6 @@ class App:
         self._save_options()
         if opts.cover_mode == "file":
             try:
-                import cover as cover_mod
-
                 img = cover_mod.load_cover(opts.cover_path)
                 if img.too_small:
                     self.log("warn_cover_small", width=img.width)
@@ -1312,4 +1312,11 @@ class App:
 
 
 def launch(initial_files: list[str] | None = None) -> None:
-    App(initial_files).mainloop()
+    try:
+        app = App(initial_files)
+        app.root.update()           # draw the window first, then take the start-up picture away
+    finally:
+        splash.close_splash()       # also when the window could not be built: an error box must not hide behind it
+    # Pillow (covers) loads behind the window; a conversion that starts earlier waits in cover.load_heavy().
+    threading.Thread(target=cover_mod.preload_heavy, name="preload-pillow", daemon=True).start()
+    app.mainloop()

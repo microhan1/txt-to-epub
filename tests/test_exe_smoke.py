@@ -81,6 +81,27 @@ def windows_of(pids: set[int]) -> list[tuple[int, str]]:
     return found
 
 
+def plain_windows(pids: set[int]) -> list[int]:
+    """Visible windows without a title bar: the start-up picture is one (2026-11-10). After the
+    program window is up there must be none left, or the picture would sit on top of it."""
+    user32 = ctypes.windll.user32
+    user32.GetWindowLongW.restype = ctypes.c_long
+    GWL_STYLE, WS_CAPTION = -16, 0x00C00000
+    found = []
+
+    @ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+    def each(hwnd, _):
+        pid = wt.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value in pids and user32.IsWindowVisible(hwnd):
+            if (user32.GetWindowLongW(hwnd, GWL_STYLE) & WS_CAPTION) != WS_CAPTION:
+                found.append(hwnd)
+        return True
+
+    user32.EnumWindows(each, 0)
+    return found
+
+
 def test_exe_opens_and_closes_offline(tmp_path):
     exe = tmp_path / "app" / os.path.basename(EXE)
     exe.parent.mkdir()
@@ -101,6 +122,8 @@ def test_exe_opens_and_closes_offline(tmp_path):
         assert hwnd, "no window with the app title"
         time.sleep(4)  # past the 1.5 s update check, which must fail quietly behind the dead proxy
         assert proc.poll() is None
+        assert plain_windows(tree(proc.pid)) == [], "the start-up picture is still showing"
+        assert len([1 for _, text in windows_of(tree(proc.pid)) if text in TITLES]) == 1
         ctypes.windll.user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
         proc.wait(timeout=30)
     finally:

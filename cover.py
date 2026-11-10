@@ -6,9 +6,55 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import threading
 from dataclasses import dataclass
 
-from PIL import Image, ImageDraw, ImageFont
+
+class _Deferred:
+    """Stands in for a PIL module until it is first used. Reading any attribute
+    calls load_heavy(), which swaps the real module in.
+
+    Pillow is the slowest import of the exe (its DLLs are read from the one-file
+    extraction folder), and a cover is only needed when a book is converted - so
+    the window comes up first and Pillow loads behind it (2026-11-10, as in TrimPDF).
+    """
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def __getattr__(self, attr: str):
+        load_heavy()
+        return getattr(globals()[self._name], attr)
+
+
+Image = _Deferred("Image")
+ImageDraw = _Deferred("ImageDraw")
+ImageFont = _Deferred("ImageFont")
+_heavy_lock = threading.Lock()
+_heavy_loaded = False
+
+
+def load_heavy() -> None:
+    """Import Pillow and replace the stand-ins. Safe to call from any thread and
+    any number of times: a second caller waits until the first one is done, so a
+    conversion started right after the window opened simply waits here."""
+    global Image, ImageDraw, ImageFont, _heavy_loaded
+    if _heavy_loaded:
+        return
+    with _heavy_lock:
+        if not _heavy_loaded:
+            from PIL import Image, ImageDraw, ImageFont
+            _heavy_loaded = True
+
+
+def preload_heavy() -> None:
+    """For a background thread right after the window is up. A failure is ignored
+    here; the real use (make_cover / load_cover) imports again and shows the error."""
+    try:
+        load_heavy()
+    except Exception:
+        pass
+
 
 COVER_W, COVER_H = 800, 1200      # 2:3, inside the 600-1000 px width most stores ask for
 MIN_COVER_WIDTH = 600             # smaller user images get a warning only
