@@ -49,6 +49,19 @@ python main.py novel.txt --encoding auto --chapter-pattern "^第.+章" --title "
 python main.py 小说文件夹 --merge --title "书名" --author "作者" --output "书名.epub"
 ```
 
+## 保存格式：EPUB 2 或 EPUB 3
+
+默认是 EPUB 2。在第 3 步「书籍信息·封面·样式」的 **保存格式** 中可以改成 EPUB 3，所选项会在下次启动时保留。命令行用 `--epub3`（或 `--epub-version 3`）。
+
+- **EPUB 2**（默认）：OPF 2.0 加 toc.ncx 目录。유페이퍼（upaper.net）只接受 EPUB 2，要上架到 유페이퍼 的文件请保存为 EPUB 2。
+- **EPUB 3**：OPF 3.0、`nav.xhtml` 目录和 XHTML5 文档。为了旧式电子书阅读器也会写入 `toc.ncx`；两份目录来自同一章节列表，内容一致。
+
+```bash
+python main.py novel.txt --epub3
+```
+
+两种格式都用 epubcheck 5.4.0 检查过，没有错误。章节分割、段落、封面和样式与格式无关，效果相同。
+
 ## 章节模式示例
 
 去掉首尾空白后，行以模式**开头**且不超过 80 个字符时，视为章节标题。因此 `第1章 启程` 这样编号后面带副标题的行也能识别，但正文句子若以 `序章` 或 `1. ` 开头，也可能被误认为章节；在列表中取消勾选该项，它就会并入上一章的正文。默认模式可识别下面所有形式，也可以输入自己的正则表达式。模式列表在 `patterns.json` 中。
@@ -80,7 +93,7 @@ python main.py 小说文件夹 --merge --title "书名" --author "作者" --outp
 
 ## 不做的事
 
-- 不生成 EPUB3、MOBI、AZW3，只生成 EPUB2。
+- 不生成 MOBI 和 AZW3。EPUB 只有两种：2（默认）和 3。
 - 不做拼写纠错，不修改文字。
 - 含图片的文档（HTML、DOCX）不在范围内。
 - 不解除 DRM，不抓取网络小说。

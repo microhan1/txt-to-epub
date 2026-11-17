@@ -41,8 +41,64 @@ PREVIEW_CHARS = 3000
 CHECK = chr(0x2714)
 UPDATE_BG, UPDATE_BORDER = "#fff6d6", "#d9b84a"  # the new-version line: a soft, non-modal band
 LINK_FG = "#0645ad"
+# The preview and the log: the UI font. Tk's default for a Text box is the fixed font, on
+# Korean Windows 굴림체 10 with a 13 px line, so Hangul lines touched each other.
+TEXT_FONT = "TkTextFont"
 TIP_BG = "#ffffe1"  # the small note under the feedback link
 LARGE_MB = detect.WARN_SIZE / (1024 * 1024)
+
+
+WANT_W, WANT_H = 1320, 820   # first window, inside size, when the screen has room
+MIN_W, MIN_H = 1200, 700     # least size, raised to what the panels ask for
+
+
+def _work_area(widget: tk.Misc) -> tuple[int, int, int, int]:
+    """Left, top, right, bottom of the main screen without the taskbar."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            r = wintypes.RECT()
+            if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(r), 0):  # SPI_GETWORKAREA
+                if r.right > r.left and r.bottom > r.top:
+                    return r.left, r.top, r.right, r.bottom
+        except Exception:
+            pass
+    return 0, 0, widget.winfo_screenwidth(), widget.winfo_screenheight()
+
+
+def _window_frame() -> tuple[int, int, int, int]:
+    """What the border and title bar add around the inside of a window: left, top, right, bottom."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            r = wintypes.RECT(0, 0, 100, 100)
+            if ctypes.windll.user32.AdjustWindowRectEx(ctypes.byref(r), 0x00CF0000, False, 0):  # WS_OVERLAPPEDWINDOW
+                return -r.left, -r.top, r.right - 100, r.bottom - 100
+        except Exception:
+            pass
+    return 8, 31, 8, 8
+
+
+def fit_window(work: tuple[int, int, int, int], frame: tuple[int, int, int, int],
+               want: tuple[int, int], least: tuple[int, int]) -> tuple[int, int, int, int, int, int]:
+    """Inside size, position and least inside size of the main window so that all of it,
+    border and title bar too, lies in the work area, centred there. want and least are cut
+    down only when the work area is smaller. The same rule as music-tag-filler (LESSONS A25).
+    Returns (width, height, x, y, least width, least height)."""
+    left, top, right, bottom = work
+    fl, ft, fr, fb = frame
+    room_w = max(1, right - left - fl - fr)
+    room_h = max(1, bottom - top - ft - fb)
+    min_w, min_h = min(least[0], room_w), min(least[1], room_h)
+    w = max(min_w, min(want[0], room_w))
+    h = max(min_h, min(want[1], room_h))
+    x = left + max(0, (right - left) - (w + fl + fr)) // 2
+    y = top + max(0, (bottom - top) - (h + ft + fb)) // 2
+    return w, h, x, y, min_w, min_h
 
 
 def _saved_options(settings: dict) -> Options:
@@ -65,6 +121,7 @@ def _saved_options(settings: dict) -> Options:
         author=typed("author", str), publisher=typed("publisher", str),
         cover_mode=typed("cover_mode", str), cover_path=typed("cover_path", str),
         indent=typed("indent", bool), line_height=typed("line_height", str),
+        epub_version=typed("epub_version", str),
     ).validated()
 
 
@@ -192,7 +249,6 @@ class Tooltip:
 class App:
     def __init__(self, initial_files: list[str] | None = None) -> None:
         self.root = TkinterDnD.Tk() if _HAS_DND else tk.Tk()
-        self.root.geometry("1320x860")
 
         self.files: list[FileState] = []
         self.inputs: list[str] = []            # what was dropped or picked, for the one-book title default
@@ -226,20 +282,31 @@ class App:
         self.var_paragraph = tk.StringVar(value=saved.paragraph_mode)
         self.var_indent = tk.BooleanVar(value=saved.indent)
         self.var_line_height = tk.StringVar(value=saved.line_height)
+        self.var_epub_version = tk.StringVar(value=saved.epub_version)
 
         self._build()
         self._apply_texts()
-        # The window may not shrink below what the three panels ask for: at the old fixed minimum (1200x740)
-        # the style block at the bottom of panel 3 was cut off (v0.1.1).
-        self.root.update_idletasks()
-        self._min_size = (max(1200, self.root.winfo_reqwidth()), max(740, self.root.winfo_reqheight()))
-        self.root.minsize(*self._min_size)
+        self._place_window()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         # once a day, 1.5 s after the window is up, on a background thread; silent on any failure
         update_check.check_async(self.root, version.UPDATE_SLUG, version.APP_VERSION, self.prefs,
                                  self._on_update_result)
         if initial_files:
             self.root.after(100, lambda: self.add_paths(initial_files))
+
+    def _place_window(self, work: tuple[int, int, int, int] | None = None) -> None:
+        """The first size and the least size. The window may not shrink below what the three
+        panels ask for: at the old fixed minimum (1200x740) the style block at the bottom of
+        panel 3 was cut off (v0.1.1). Both are cut down only where the screen is smaller, and
+        the window opens centred in the work area, so the Convert button is never under the
+        taskbar (at 150% a 1920x1080 screen is 1280x720 for this program)."""
+        self.root.update_idletasks()
+        least = (max(MIN_W, self.root.winfo_reqwidth()), max(MIN_H, self.root.winfo_reqheight()))
+        want = (max(WANT_W, least[0]), max(WANT_H, least[1]))
+        w, h, x, y, min_w, min_h = fit_window(work or _work_area(self.root), _window_frame(), want, least)
+        self._min_size = (min_w, min_h)
+        self.root.minsize(min_w, min_h)
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
 
     # ------------------------------------------------------------ building
     def _reg(self, widget: tk.Misc, key: str, attr: str = "text") -> tk.Misc:
@@ -284,36 +351,38 @@ class App:
         files = self._reg(ttk.LabelFrame(root, padding=8), "lbl_files")
         files.grid(row=1, column=0, sticky="ew", padx=12, pady=4)
         files.columnconfigure(0, weight=1)
-        self.lbl_drop = self._reg(ttk.Label(files, anchor="center", relief="groove", padding=6,
+        self.lbl_drop = self._reg(ttk.Label(files, anchor="center", relief="groove", padding=4,
                                             foreground="#555"), "drop_hint")
-        self.lbl_drop.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        self.lbl_drop.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
         self.lst_files = tk.Listbox(files, height=4, activestyle="none", exportselection=False)
         self.lst_files.grid(row=1, column=0, sticky="nsew")
         self.lst_files.bind("<<ListboxSelect>>", self._on_select_file)
         self.lst_files.bind("<Alt-Up>", lambda e: self.move_selected(-1) or "break")
         self.lst_files.bind("<Alt-Down>", lambda e: self.move_selected(1) or "break")
         btns = ttk.Frame(files)
-        btns.grid(row=1, column=1, rowspan=2, sticky="ns", padx=(8, 0))
+        btns.grid(row=1, column=1, sticky="n", padx=(8, 0))
         self.btn_add = self._reg(ttk.Button(btns, command=self._add_files_dialog), "btn_add_files")
         self.btn_add.pack(fill="x")
         self.btn_remove = self._reg(ttk.Button(btns, command=self.remove_selected), "btn_remove")
         self.btn_remove.pack(fill="x", pady=4)
         self.btn_clear = self._reg(ttk.Button(btns, command=self.clear_files), "btn_clear")
         self.btn_clear.pack(fill="x")
-        self._reg(ttk.Label(btns, foreground="#555"), "lbl_order").pack(fill="x", pady=(8, 0))
-        self.btn_up = self._reg(ttk.Button(btns, command=lambda: self.move_selected(-1)), "btn_up")
-        self.btn_up.pack(fill="x")
-        self.btn_down = self._reg(ttk.Button(btns, command=lambda: self.move_selected(1)), "btn_down")
-        self.btn_down.pack(fill="x", pady=(4, 0))
-        # one EPUB per file (as before) or every file one chapter of a single book
+        # one EPUB per file (as before) or every file one chapter of a single book. The order
+        # buttons only work for "one book", so they sit on the same line, right after it
+        # (v0.2.3: they used to make the button column, and the window, 90 px taller).
         mode = ttk.Frame(files)
-        mode.grid(row=2, column=0, sticky="w", pady=(6, 0))
+        mode.grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
         self.rad_each = self._reg(ttk.Radiobutton(mode, variable=self.var_merge, value="each",
                                                   command=self._on_merge_mode), "merge_each")
         self.rad_each.pack(side="left")
         self.rad_one = self._reg(ttk.Radiobutton(mode, variable=self.var_merge, value="one",
                                                  command=self._on_merge_mode), "merge_one")
         self.rad_one.pack(side="left", padx=(16, 0))
+        self._reg(ttk.Label(mode, foreground="#555"), "lbl_order").pack(side="left", padx=(28, 6))
+        self.btn_up = self._reg(ttk.Button(mode, command=lambda: self.move_selected(-1)), "btn_up")
+        self.btn_up.pack(side="left")
+        self.btn_down = self._reg(ttk.Button(mode, command=lambda: self.move_selected(1)), "btn_down")
+        self.btn_down.pack(side="left", padx=(4, 0))
         if _HAS_DND:
             for w in (root, self.lbl_drop, self.lst_files):
                 w.drop_target_register(DND_FILES)
@@ -334,7 +403,7 @@ class App:
         logf = self._reg(ttk.LabelFrame(root, padding=4), "lbl_log")
         logf.grid(row=3, column=0, sticky="ew", padx=12, pady=4)
         logf.columnconfigure(0, weight=1)
-        self.txt_log = tk.Text(logf, height=4, state="disabled", wrap="none")
+        self.txt_log = tk.Text(logf, height=3, state="disabled", wrap="none", font=TEXT_FONT)
         self.txt_log.grid(row=0, column=0, sticky="ew")
         sb = ttk.Scrollbar(logf, command=self.txt_log.yview)
         sb.grid(row=0, column=1, sticky="ns")
@@ -380,8 +449,10 @@ class App:
         self.cmb_enc.bind("<<ComboboxSelected>>", self._on_encoding)
         self.lbl_enc_warn = ttk.Label(f, foreground="#c00", wraplength=340)
         self.lbl_enc_warn.grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        self.txt_preview = tk.Text(f, wrap="word", state="disabled", height=8, width=30,
-                                   highlightthickness=2, highlightbackground="#ccc", highlightcolor="#ccc")
+        self.lbl_enc_warn.grid_remove()  # shown only with a warning; empty, it left a blank line above the preview
+        self.txt_preview = tk.Text(f, wrap="word", state="disabled", height=8, width=30, font=TEXT_FONT,
+                                   spacing1=2, highlightthickness=2, highlightbackground="#ccc",
+                                   highlightcolor="#ccc")
         self.txt_preview.grid(row=3, column=0, columnspan=2, sticky="nsew", pady=(6, 0))
         self.lbl_preview_msg = ttk.Label(f, foreground="#555", wraplength=340)
         self.lbl_preview_msg.grid(row=4, column=0, columnspan=2, sticky="w")
@@ -430,9 +501,11 @@ class App:
         self.btn_toggle.grid(row=0, column=0, sticky="w")
         self.btn_jump = self._reg(ttk.Button(bottom, command=self._jump_preview), "btn_jump")
         self.btn_jump.grid(row=0, column=1, sticky="w", padx=(8, 0))
-        self._reg(ttk.Label(bottom), "lbl_line_no").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        # label, box and button on one line, the box right after its label (it used to start
+        # under the second button, a gap that grew with the first button's text)
         line_row = ttk.Frame(bottom)
-        line_row.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        line_row.grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self._reg(ttk.Label(line_row), "lbl_line_no").pack(side="left", padx=(0, 6))
         self.ent_line = ttk.Entry(line_row, textvariable=self.var_line_no, width=8)
         self.ent_line.pack(side="left")
         self.ent_line.bind("<Return>", lambda e: self._add_manual())
@@ -443,26 +516,34 @@ class App:
         f = self._reg(ttk.LabelFrame(parent, padding=6), "lbl_step_meta")
         f.grid(row=0, column=2, sticky="nsew", padx=(6, 0))
         f.columnconfigure(1, weight=1)
-        r = 0
-        self._reg(ttk.Label(f), "meta_title").grid(row=r, column=0, sticky="w")
-        self.ent_title = ttk.Entry(f, textvariable=self.var_title)
-        self.ent_title.grid(row=r, column=1, sticky="ew", padx=(6, 0))
-        self.var_title.trace_add("write", lambda *_: self._on_title_edit())
-        r += 1
-        self._reg(ttk.Label(f), "meta_author").grid(row=r, column=0, sticky="w", pady=(4, 0))
-        ttk.Entry(f, textvariable=self.var_author).grid(row=r, column=1, sticky="ew", padx=(6, 0), pady=(4, 0))
-        r += 1
-        self._reg(ttk.Label(f), "meta_lang").grid(row=r, column=0, sticky="w", pady=(4, 0))
-        self.cmb_text_lang = ttk.Combobox(f, state="readonly", width=14)
-        self.cmb_text_lang.grid(row=r, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
-        self.cmb_text_lang.bind("<<ComboboxSelected>>", self._on_text_lang)
-        r += 1
-        self._reg(ttk.Label(f), "meta_publisher").grid(row=r, column=0, sticky="w", pady=(4, 0))
-        ttk.Entry(f, textvariable=self.var_publisher).grid(row=r, column=1, sticky="ew", padx=(6, 0), pady=(4, 0))
-        r += 1
+        # label | box rows. Every box fills the column, so the right edges line up; the style
+        # rows below use the same label width (_align_labels), so the left edges do too.
+        self._meta_labels: list[ttk.Label] = []
+        self._style_labels: list[ttk.Label] = []
 
-        cov = self._reg(ttk.LabelFrame(f, padding=6), "cover_mode")
-        cov.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        def row(r: int, key: str, box: tk.Misc) -> None:
+            pad = (0 if r == 0 else 4, 0)
+            label = self._reg(ttk.Label(f), key)
+            label.grid(row=r, column=0, sticky="w", pady=pad)
+            box.grid(row=r, column=1, sticky="ew", padx=(6, 0), pady=pad)
+            self._meta_labels.append(label)
+
+        self.ent_title = ttk.Entry(f, textvariable=self.var_title)
+        row(0, "meta_title", self.ent_title)
+        self.var_title.trace_add("write", lambda *_: self._on_title_edit())
+        row(1, "meta_author", ttk.Entry(f, textvariable=self.var_author))
+        self.cmb_text_lang = ttk.Combobox(f, state="readonly", width=14)
+        row(2, "meta_lang", self.cmb_text_lang)
+        self.cmb_text_lang.bind("<<ComboboxSelected>>", self._on_text_lang)
+        self.cmb_epub = ttk.Combobox(f, state="readonly", width=14)
+        row(3, "meta_format", self.cmb_epub)
+        self.cmb_epub.bind("<<ComboboxSelected>>", self._on_epub_version)
+        row(4, "meta_publisher", ttk.Entry(f, textvariable=self.var_publisher))
+        self._meta_frame = f
+        r = 5
+
+        cov = self._reg(ttk.LabelFrame(f, padding=(6, 2, 6, 4)), "cover_mode")
+        cov.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         cov.columnconfigure(0, weight=1)
         for i, mode in enumerate(core.COVER_MODES):
             self._reg(ttk.Radiobutton(cov, variable=self.var_cover_mode, value=mode, command=self._on_cover_mode),
@@ -473,22 +554,37 @@ class App:
         self.btn_browse.grid(row=3, column=1, padx=(4, 0), pady=(4, 0))
         r += 1
 
-        sty = self._reg(ttk.LabelFrame(f, padding=6), "lbl_style")
-        sty.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        sty = self._reg(ttk.LabelFrame(f, padding=(6, 2, 6, 4)), "lbl_style")
+        sty.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         sty.columnconfigure(1, weight=1)
-        self._reg(ttk.Label(sty), "opt_paragraph").grid(row=0, column=0, columnspan=2, sticky="w")
+        self._sty_frame = sty
+        lbl_para = self._reg(ttk.Label(sty), "opt_paragraph")
+        lbl_para.grid(row=0, column=0, sticky="w")
         pf = ttk.Frame(sty)
-        pf.grid(row=1, column=0, columnspan=2, sticky="w", padx=(12, 0))
+        pf.grid(row=0, column=1, sticky="w", padx=(6, 0))
         for mode in chap.PARAGRAPH_MODES:
             self._reg(ttk.Radiobutton(pf, variable=self.var_paragraph, value=mode), f"para_{mode}")\
                 .pack(side="left", padx=(0, 8))
         self._reg(ttk.Checkbutton(sty, variable=self.var_indent), "opt_indent")\
-            .grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        self._reg(ttk.Label(sty), "opt_line_height").grid(row=3, column=0, sticky="w", pady=(4, 0))
+            .grid(row=1, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
+        lbl_height = self._reg(ttk.Label(sty), "opt_line_height")
+        lbl_height.grid(row=2, column=0, sticky="w", pady=(4, 0))
         self.cmb_line_height = ttk.Combobox(sty, state="readonly", width=14)
-        self.cmb_line_height.grid(row=3, column=1, sticky="w", pady=(4, 0))
+        self.cmb_line_height.grid(row=2, column=1, sticky="ew", padx=(6, 0), pady=(4, 0))
         self.cmb_line_height.bind("<<ComboboxSelected>>", self._on_line_height)
+        self._style_labels += [lbl_para, lbl_height]
         self._on_cover_mode()
+
+    def _align_labels(self) -> None:
+        """One label width for panel 3 and its style box, measured in the current language,
+        so the boxes of both start at the same x."""
+        self.root.update_idletasks()
+        top_x = self._meta_labels[0].winfo_x()
+        inset = self._sty_frame.winfo_x() + self._style_labels[0].winfo_x() - top_x
+        width = max([w.winfo_reqwidth() for w in self._meta_labels] +
+                    [w.winfo_reqwidth() + inset for w in self._style_labels])
+        self._meta_frame.columnconfigure(0, minsize=width)
+        self._sty_frame.columnconfigure(0, minsize=max(width - inset, 0))
 
     # ------------------------------------------------------------ texts
     def _apply_texts(self) -> None:
@@ -508,12 +604,15 @@ class App:
                                    if self.var_text_lang.get() in core.TEXT_LANGS else 0)
         self.cmb_line_height.configure(values=[t("line_height_default")] + list(core.LINE_HEIGHTS[1:]))
         self.cmb_line_height.current(core.LINE_HEIGHTS.index(self.var_line_height.get()))
+        self.cmb_epub.configure(values=[t("format_epub2"), t("format_epub3")])
+        self.cmb_epub.current(1 if self.var_epub_version.get() == "3" else 0)
         self._refresh_file_panel()
         if self._status_key:
             self._set_status(self._status_key, **self._status_kwargs)
         if self._update_info is not None:
             self._show_update_notice()
         self.tip_feedback.refresh()
+        self._align_labels()
 
     def _set_status(self, key: str, **kwargs) -> None:
         self._status_key, self._status_kwargs = key, kwargs
@@ -539,6 +638,12 @@ class App:
         i = self.cmb_line_height.current()
         self.var_line_height.set(core.LINE_HEIGHTS[max(i, 0)])
 
+    def _on_epub_version(self, _event=None) -> None:
+        three = self.cmb_epub.current() == 1
+        self.var_epub_version.set("3" if three else "2")
+        if three:
+            self.log("log_epub3_note")  # EPUB 2 is what upaper takes; the note is read where the user chose
+
     def _on_cover_mode(self) -> None:
         state = "normal" if self.var_cover_mode.get() == "file" else "disabled"
         self.ent_cover.configure(state=state)
@@ -556,7 +661,7 @@ class App:
             author=self.var_author.get(), publisher=self.var_publisher.get(),
             cover_mode=self.var_cover_mode.get(), cover_path=self.var_cover_path.get(),
             indent=self.var_indent.get(), line_height=self.var_line_height.get(),
-            merge=self.merging(),
+            merge=self.merging(), epub_version=self.var_epub_version.get(),
         ).validated()
 
     def _save_options(self) -> None:
@@ -960,6 +1065,10 @@ class App:
             if det.confidence < detect.LOW_CONFIDENCE or st.loaded.replaced:
                 border = "#d00"
                 self.lbl_enc_warn.configure(text=t("enc_low_confidence"))
+        if self.lbl_enc_warn.cget("text"):
+            self.lbl_enc_warn.grid()
+        else:
+            self.lbl_enc_warn.grid_remove()
         self.txt_preview.configure(state="disabled", highlightbackground=border, highlightcolor=border)
 
     def _refresh_tree(self) -> None:

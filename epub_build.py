@@ -1,8 +1,11 @@
-"""EPUB2 assembly for txt-to-epub. Shared by the GUI and the CLI.
+"""EPUB assembly for txt-to-epub. Shared by the GUI and the CLI.
 
 Everything the two front ends need lives here: Options, loading and decoding
-a text file, chapter detection, and writing the EPUB. The EPUB is EPUB 2
-only (OPF 2.0 + NCX), the structure that stores such as upaper still check.
+a text file, chapter detection, and writing the EPUB. The default is EPUB 2
+(OPF 2.0 + NCX), the structure that stores such as upaper still check; EPUB 3
+(OPF 3.0, nav.xhtml, XHTML5) is an option. An EPUB 3 package keeps a toc.ncx as
+well, written from the same chapter list as nav.xhtml, so older e-ink readers
+that only read the NCX still get a table of contents.
 """
 from __future__ import annotations
 
@@ -28,6 +31,7 @@ TEXT_LANGS = ("ko", "en", "zh", "ja")
 LINE_HEIGHTS = ("", "1.4", "1.6", "1.8")
 COVER_MODES = ("none", "file", "auto")
 LANG_AUTO = "auto"
+EPUB_VERSIONS = ("2", "3")
 
 MAX_TITLE_CHARS = 300
 TEXT_EXTS = (".txt",)
@@ -52,6 +56,7 @@ class Options:
     indent: bool = True
     line_height: str = ""
     merge: bool = False                 # several files -> one EPUB, one chapter per file
+    epub_version: str = "2"             # "2" (default) or "3"
 
     def validated(self) -> "Options":
         o = Options(**self.__dict__)
@@ -79,6 +84,7 @@ class Options:
         o.split_chapters = bool(o.split_chapters)
         o.indent = bool(o.indent)
         o.merge = bool(o.merge)
+        o.epub_version = "3" if str(o.epub_version).strip() in ("3", "3.0") else "2"
         return o
 
 
@@ -218,8 +224,9 @@ def _template(name: str) -> Template:
     return _template_cache[name]
 
 
-def _xhtml(title: str, body: str, language: str) -> bytes:
-    return _template("chapter.xhtml").substitute(title=escape(title), body=body, language=language).encode("utf-8")
+def _xhtml(title: str, body: str, language: str, v3: bool = False) -> bytes:
+    name = "chapter3.xhtml" if v3 else "chapter.xhtml"
+    return _template(name).substitute(title=escape(title), body=body, language=language).encode("utf-8")
 
 
 def _paragraphs_html(paragraphs: list[str]) -> list[str]:
@@ -248,13 +255,18 @@ def _split_body(heading_html: str, para_html: list[str], limit: int) -> list[str
 def build_epub(output_path: str, title: str, author: str, language: str, sections: list[Section],
                publisher: str = "", cover: cover_mod.CoverImage | None = None, indent: bool = True,
                line_height: str = "", progress=None, cancel: threading.Event | None = None,
-               split_bytes: int = chap.CHAPTER_SPLIT_BYTES) -> tuple[str, int, int]:
-    """Write the EPUB atomically. Returns (path written, nav entries, xhtml files)."""
+               split_bytes: int = chap.CHAPTER_SPLIT_BYTES, epub_version: str = "2") -> tuple[str, int, int]:
+    """Write the EPUB atomically. Returns (path written, nav entries, xhtml files).
+
+    *epub_version* "2" (default) writes OPF 2.0 + NCX + XHTML 1.1; "3" writes
+    OPF 3.0 + nav.xhtml + XHTML5 and keeps a toc.ncx beside the nav document."""
+    v3 = epub_version == "3"
     uid = str(uuid.uuid4())
     title = title.strip() or default_title(output_path)
     manifest: list[str] = []
     spine: list[str] = []
     navpoints: list[str] = []
+    nav_items: list[tuple[str, str]] = []   # (file, label) of every chapter, for nav.xhtml
     guide: list[str] = []
     files: list[tuple[str, bytes]] = []
 
@@ -266,13 +278,15 @@ def build_epub(output_path: str, title: str, author: str, language: str, section
     if cover is not None:
         img_name = f"images/cover.{cover.ext}"
         files.append((f"OEBPS/{img_name}", cover.data))
-        manifest.append(f'    <item id="cover-image" href="{img_name}" media-type="{cover.media_type}"/>')
-        cover_html = _template("cover.xhtml").substitute(title=escape(title), alt=quoteattr(title),
-                                                         image=img_name, language=language)
+        props = ' properties="cover-image"' if v3 else ""
+        manifest.append(f'    <item id="cover-image" href="{img_name}" media-type="{cover.media_type}"{props}/>')
+        cover_html = _template("cover3.xhtml" if v3 else "cover.xhtml").substitute(
+            title=escape(title), alt=quoteattr(title), image=img_name, language=language)
         files.append(("OEBPS/cover.xhtml", cover_html.encode("utf-8")))
         manifest.append('    <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>')
         spine.append('    <itemref idref="cover" linear="yes"/>')
-        guide.append('    <reference type="cover" title="Cover" href="cover.xhtml"/>')
+        if not v3:  # EPUB 3 has the landmarks in nav.xhtml instead of <guide>
+            guide.append('    <reference type="cover" title="Cover" href="cover.xhtml"/>')
 
     play = 0
     total = max(len(sections), 1)
@@ -285,12 +299,13 @@ def build_epub(output_path: str, title: str, author: str, language: str, section
         for part, body in enumerate(bodies, 1):
             name = f"ch{idx:04d}.xhtml" if part == 1 else f"ch{idx:04d}-{part}.xhtml"
             fid = os.path.splitext(name)[0]
-            files.append((f"OEBPS/{name}", _xhtml(sec.title or title, body, language)))
+            files.append((f"OEBPS/{name}", _xhtml(sec.title or title, body, language, v3)))
             manifest.append(f'    <item id="{fid}" href="{name}" media-type="application/xhtml+xml"/>')
             spine.append(f'    <itemref idref="{fid}"/>')
             if part == 1:
                 play += 1
                 label = escape(sec.title or title)
+                nav_items.append((name, label))
                 navpoints.append(
                     f'    <navPoint id="np{play}" playOrder="{play}">\n'
                     f'      <navLabel><text>{label}</text></navLabel>\n'
@@ -305,23 +320,45 @@ def build_epub(output_path: str, title: str, author: str, language: str, section
     extra_meta = []
     if publisher.strip():
         extra_meta.append(f"    <dc:publisher>{escape(publisher.strip())}</dc:publisher>")
-    if cover is not None:
+    if cover is not None and not v3:
         extra_meta.append('    <meta name="cover" content="cover-image"/>')
 
-    opf = _template("content.opf").substitute(
-        title=escape(title), author=escape(author.strip()), language=language, uid=uid,
-        date=_dt.date.today().isoformat(), extra_meta="\n".join(extra_meta),
-        manifest="\n".join(manifest), spine="\n".join(spine),
-        guide=("  <guide>\n" + "\n".join(guide) + "\n  </guide>") if guide else "")
-    ncx = _template("toc.ncx").substitute(uid=uid, title=escape(title), author=escape(author.strip()),
-                                         navpoints="\n".join(navpoints))
+    date = _dt.date.today().isoformat()
+    # The NCX must carry the very identifier the OPF has: "urn:uuid:..." in EPUB 3 (epubcheck NCX-001).
+    ncx = _template("toc.ncx").substitute(uid=f"urn:uuid:{uid}" if v3 else uid, title=escape(title),
+                                         author=escape(author.strip()), navpoints="\n".join(navpoints))
+    if v3:
+        who = escape(author.strip())
+        creator = (f'    <dc:creator id="creator">{who}</dc:creator>\n'
+                   '    <meta refines="#creator" property="role" scheme="marc:relators">aut</meta>') if who else ""
+        landmarks = []
+        if cover is not None:
+            landmarks.append('      <li><a epub:type="cover" href="cover.xhtml">Cover</a></li>')
+        if nav_items:
+            landmarks.append(f'      <li><a epub:type="bodymatter" href="{nav_items[0][0]}">Text</a></li>')
+        nav_html = _template("nav3.xhtml").substitute(
+            title=escape(title), language=language,
+            items="\n".join(f'      <li><a href="{name}">{label}</a></li>' for name, label in nav_items),
+            landmarks="\n".join(landmarks))
+        files.append(("OEBPS/nav.xhtml", nav_html.encode("utf-8")))
+        modified = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        opf = _template("content3.opf").substitute(
+            title=escape(title), creator=creator, language=language, uid=uid, date=date, modified=modified,
+            extra_meta="\n".join(extra_meta), manifest="\n".join(manifest), spine="\n".join(spine))
+    else:
+        opf = _template("content.opf").substitute(
+            title=escape(title), author=escape(author.strip()), language=language, uid=uid,
+            date=date, extra_meta="\n".join(extra_meta),
+            manifest="\n".join(manifest), spine="\n".join(spine),
+            guide=("  <guide>\n" + "\n".join(guide) + "\n  </guide>") if guide else "")
     files.append(("OEBPS/content.opf", opf.encode("utf-8")))
     files.append(("OEBPS/toc.ncx", ncx.encode("utf-8")))
 
     if cancel is not None and cancel.is_set():
         raise Cancelled()
     written = _write_zip(output_path, files)
-    return written, play, sum(1 for name, _ in files if name.endswith(".xhtml") and name != "OEBPS/cover.xhtml")
+    not_chapters = ("OEBPS/cover.xhtml", "OEBPS/nav.xhtml")
+    return written, play, sum(1 for name, _ in files if name.endswith(".xhtml") and name not in not_chapters)
 
 
 # Reserving the output name and moving the finished file onto it happen under one
@@ -434,7 +471,7 @@ def convert(loaded: Loaded, opts: Options, title: str = "", chapters: list[Chapt
     out = output_path or output_path_for(loaded.path)
     out, nav, nfiles = build_epub(out, title, opts.author, lang, sections, publisher=opts.publisher,
                              cover=cover_img, indent=opts.indent, line_height=opts.line_height,
-                             progress=progress, cancel=cancel)
+                             progress=progress, cancel=cancel, epub_version=opts.epub_version)
     headings = sum(1 for c in chapters if c.heading)
     return FileResult(out, headings, nfiles, loaded.replaced, headings == 0, cover_small, lang, nav)
 
@@ -613,6 +650,6 @@ def convert_many(parts: list[Part], opts: Options, title: str, output_path: str 
     out = output_path or merge_output_path(parts[0].path, title)
     out, nav, nfiles = build_epub(out, title, opts.author, lang, sections, publisher=opts.publisher,
                                   cover=cover_img, indent=opts.indent, line_height=opts.line_height,
-                                  cancel=cancel)
+                                  cancel=cancel, epub_version=opts.epub_version)
     replaced = sum(p.loaded.replaced for p in parts)
     return FileResult(out, len(sections), nfiles, replaced, False, cover_small, lang, nav)

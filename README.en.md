@@ -49,6 +49,19 @@ On the command line it is `--merge`. Without `--output` the book is written as `
 python main.py novel_folder --merge --title "Title" --author "Author" --output "Title.epub"
 ```
 
+## Output format: EPUB 2 or EPUB 3
+
+The default is EPUB 2. Under **Output format** in step 3 (Book info, cover, style) you can switch to EPUB 3, and the choice is remembered for the next start. On the command line it is `--epub3` (or `--epub-version 3`).
+
+- **EPUB 2** (default): OPF 2.0 with a toc.ncx table of contents. upaper.net (유페이퍼) accepts EPUB 2 only, so save files meant for upaper as EPUB 2.
+- **EPUB 3**: OPF 3.0, a `nav.xhtml` table of contents and XHTML5 documents. A `toc.ncx` is written as well for older e-ink readers; both contents lists come from the same chapter list, so they match.
+
+```bash
+python main.py novel.txt --epub3
+```
+
+Both formats pass epubcheck 5.4.0 with no errors. Chapter splitting, paragraphs, cover and style work the same in either format.
+
 ## Chapter pattern examples
 
 A line is a chapter heading when, with surrounding whitespace removed, it **starts** with the pattern and is at most 80 characters long. So `제1장 떠나며` is caught even with a subtitle after the number, but a body sentence that begins with `Prologue` or `1. ` can be taken for a chapter too; untick it in the list and it joins the previous chapter's text. The default pattern catches all of these, and you can type your own regular expression. The patterns live in `patterns.json`.
@@ -80,7 +93,7 @@ Tell us what's broken, awkward or missing with **Send feedback** at the top of t
 
 ## What it does not do
 
-- No EPUB3, MOBI or AZW3. EPUB2 only.
+- No MOBI or AZW3. EPUB comes in two kinds only: 2 (the default) and 3.
 - No spell checking or text editing.
 - Documents with images (HTML, DOCX) are out of scope.
 - No DRM removal and no web-novel scraping.

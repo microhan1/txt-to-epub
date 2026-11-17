@@ -63,6 +63,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--indent", dest="indent", action="store_true", default=True, help=t("cli_indent"))
     g.add_argument("--no-indent", dest="indent", action="store_false", help=t("cli_no_indent"))
     p.add_argument("--line-height", choices=core.LINE_HEIGHTS[1:], default="", help=t("cli_line_height"))
+    p.add_argument("--epub-version", choices=core.EPUB_VERSIONS, default="2", help=t("cli_epub_version"))
+    p.add_argument("--epub3", dest="epub_version", action="store_const", const="3", help=t("cli_epub3"))
     p.add_argument("--merge", action="store_true", help=t("cli_merge"))
     p.add_argument("--output", default="", metavar="FILE", help=t("cli_output"))
     p.add_argument("-y", "--yes", action="store_true", help=t("cli_yes"))
@@ -81,7 +83,7 @@ def _options_from(args: argparse.Namespace) -> core.Options:
         encoding=args.encoding, pattern=args.chapter_pattern, split_chapters=not args.no_chapters,
         paragraph_mode=args.paragraph, text_lang=args.lang, author=args.author, publisher=args.publisher,
         cover_mode=cover_mode, cover_path=cover_path, indent=args.indent, line_height=args.line_height,
-        merge=args.merge,
+        merge=args.merge, epub_version=args.epub_version,
     )
 
 
@@ -190,6 +192,8 @@ def run_cli(args: argparse.Namespace) -> int:
             print(t("err_unknown_encoding", enc=args.encoding), file=sys.stderr)
             return 2
     opts = _options_from(args).validated()
+    if opts.epub_version == "3":
+        print(t("log_epub3_note"))
     if opts.cover_mode == "file":
         try:
             import cover as cover_mod
